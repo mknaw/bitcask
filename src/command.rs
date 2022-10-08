@@ -23,7 +23,7 @@ pub struct Set {
 }
 
 
-fn make_get(tokens: &mut IntoIter<Token>) -> Result<Command, Box<dyn Error>> {
+fn make_get(tokens: &mut IntoIter<Token>) -> crate::Result<Command> {
     // Extract a `Command::Get` from `tokens`.
     if let Some(Token::Simple(s)) = tokens.next() {
         if tokens.next().is_none() {
@@ -33,7 +33,7 @@ fn make_get(tokens: &mut IntoIter<Token>) -> Result<Command, Box<dyn Error>> {
     return Err("uhoh".into());  // TODO informative error, error type
 }
 
-fn make_set(tokens: &mut IntoIter<Token>) -> Result<Command, Box<dyn Error>> {
+fn make_set(tokens: &mut IntoIter<Token>) -> crate::Result<Command> {
     if let Some(Token::Simple(key)) = tokens.next() {
         if let Some(Token::Simple(val)) = tokens.next() {
             if tokens.next().is_none() {
@@ -45,7 +45,7 @@ fn make_set(tokens: &mut IntoIter<Token>) -> Result<Command, Box<dyn Error>> {
     return Err("uhoh".into());  // TODO informative error, error type
 }
 
-pub fn parse(cur: &mut Cursor<&[u8]>) -> Result<Command, Box<dyn Error>> {
+pub fn parse(cur: &mut Cursor<&[u8]>) -> crate::Result<Command> {
     let mut tokens = parse_tokens(cur).into_iter();
 
     match tokens.next() {
@@ -56,7 +56,7 @@ pub fn parse(cur: &mut Cursor<&[u8]>) -> Result<Command, Box<dyn Error>> {
 }
 
 // TODO probably not the errors you want!
-fn parse_token(bytes: Vec<u8>) -> Result<Token, Box<dyn Error>> {
+fn parse_token(bytes: Vec<u8>) -> crate::Result<Token> {
     if bytes == b"get".to_vec() {
         Ok(Token::Get)
     } else if bytes == b"set".to_vec() {

@@ -8,11 +8,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::command;
 use crate::config::Config;
 use crate::keydir::KeyDir;
-use crate::logwriter::LogWriter;
+use crate::log_manager::{FileLogManager, LogManagerT};
 
 pub struct BitCask<'a> {
     config: &'a Config<'a>,
-    logfile: Option<PathBuf>,
+    // TODOO probably should just be `dyn LogWriterT`?
+    log_manager: FileLogManager<'a>,
     keydir: KeyDir,
 }
 
@@ -20,65 +21,27 @@ impl<'a> BitCask<'a> {
     pub fn new(config: &'a Config<'a>) -> Self {
         Self { 
             config,
-            // TODO implement locking?
-            logfile: None,
+            log_manager: FileLogManager::new(config),
             keydir: KeyDir::new(),
         }
     }
 
-    // pub fn get_logfile(&mut self) -> Result<PathBuf, Box<dyn Error>> {
-        // if self.logfile.is_none() {
-            // self.make_new_logfile()?;
-        // }
-        // if let Some(path) = self.logfile {
-            // Ok(path.clone())
-        // } else {
-            // panic!("Ba")
-        // }
-    // }
-
-    // TODO make_new_logfile when current above size threshold
-    fn make_new_logfile(&mut self) -> Result<(), Box<dyn Error>> {
-        // TODO also have to make directory if it does not exist.
-        let fname = self.generate_fname()?;
-        let path = self.config.log_dir.join(fname);
-        self.logfile = Some(path);
+    pub fn set(&mut self, cmd: command::Set) -> crate::Result<()> {
+        // TODO probably better to have a single LogWriter with a buffer?
+        let entry = Entry::from_set(&cmd)?;
+        self.log_manager.write(entry.serialize())?;
+        let val_pos: u64 = self.log_manager.position()? - entry.val_sz() as u64;
+        let path = self.log_manager.current_path.as_ref().unwrap();
+        self.keydir.update(
+            path.file_name().unwrap().into(),
+            &entry,
+            val_pos,
+        );
         Ok(())
     }
 
-    fn generate_fname(&self) -> Result<String, Box<dyn Error>> {
-        let ts: u64 = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        // TODO append some random junk to avoid collisions?
-        Ok(format!("{}.cask", ts))
-    }
-
-    pub fn set(&mut self, cmd: command::Set) -> Result<(), Box<dyn Error>> {
-        self.make_new_logfile()?;
-        if let Some(path) = &self.logfile {
-            let file = File::options()
-                .create_new(true)
-                .append(true)
-                .open(path)
-                .unwrap();
-            // TODO probably better to have a single LogWriter with a buffer?
-            let mut writer = LogWriter::new(file);
-            let entry = Entry::from_set(&cmd)?;
-            writer.write(entry.serialize())?;
-            let val_pos: u64 = writer.stream_position()? - entry.val_sz() as u64;
-            self.keydir.update(
-                path.file_name().unwrap().into(),
-                &entry,
-                val_pos,
-            );
-            Ok(())
-        } else {
-            // TODO !!! should return Err
-            Ok(())
-        }
-    }
-
     // TODO should take a Command::Get ultimately.
-    pub fn get(&self, key: String) -> Result<String, Box<dyn Error>> {
+    pub fn get(&self, key: String) -> crate::Result<String> {
         if let Some(item) = self.keydir.get(&key) {
             let path = self.config.log_dir.join(PathBuf::from(item.file_id.clone()));
             let mut file = File::open(path)?;

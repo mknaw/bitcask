@@ -1,5 +1,4 @@
 use std::io::Cursor;
-use std::error::Error;
 // use std::net::TcpListener;
 
 // use bytes::BytesMut;
@@ -8,17 +7,20 @@ use std::error::Error;
 
 use crate::config::Config;
 use crate::bitcask::BitCask;
+use crate::lib::Result;
 
 mod bitcask;
 mod command;
 mod config;
 mod keydir;
-mod logwriter;
+mod lib;
+mod log_manager;
+mod log_writer;
 
 // pub type Error = Box<dyn std::error::Error + Send + Sync>;
 // type Result<T> = std::result::Result<T, Error>;
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<()> {
     let config = Config::new();
     let mut bitcask = BitCask::new(&config);
     // let listener = TcpListener::bind(config.socket_addr());

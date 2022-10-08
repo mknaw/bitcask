@@ -4,15 +4,18 @@ pub struct Config<'a> {
     pub log_dir: &'a Path,
     host: IpAddr,
     port: u16,
+    pub max_log_file_size: u64,
 }
 
 // TODO read config vals from dot env
 impl<'a> Config<'a> {
+    //  TODO is this actually a `Default`?
     pub fn new() -> Self {
         Self { 
             log_dir: Path::new("/tmp/bitcask/"),
             host: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             port: 6969,
+            max_log_file_size: 1024,
         }
     }
 
