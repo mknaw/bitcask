@@ -1,4 +1,21 @@
-use std::{io::{Cursor, BufRead}, error::Error, vec::IntoIter};
+use std::fmt;
+use std::io::{Cursor, BufRead};
+use std::vec::IntoIter;
+
+#[derive(Debug)]
+pub struct ParseError;
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ParseError occurred")
+    }
+}
+
+impl ::std::error::Error for ParseError {
+    fn description(&self) -> &str {
+        "no error"
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Token {
@@ -12,11 +29,11 @@ pub enum Command {
     Set(Set),
 }
 
-#[derive(PartialEq)]
-pub struct Get(String);
+#[derive(Debug, PartialEq)]
+pub struct Get(pub String);
 
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct Set {
     pub key: String,
     pub val: String,
@@ -30,7 +47,7 @@ fn make_get(tokens: &mut IntoIter<Token>) -> crate::Result<Command> {
             return Ok(Command::Get(Get(s)));
         }
     }
-    return Err("uhoh".into());  // TODO informative error, error type
+    Err(Box::new(ParseError {}))
 }
 
 fn make_set(tokens: &mut IntoIter<Token>) -> crate::Result<Command> {
@@ -42,7 +59,7 @@ fn make_set(tokens: &mut IntoIter<Token>) -> crate::Result<Command> {
         }
     }
 
-    return Err("uhoh".into());  // TODO informative error, error type
+    Err(Box::new(ParseError {}))
 }
 
 pub fn parse(cur: &mut Cursor<&[u8]>) -> crate::Result<Command> {
@@ -51,18 +68,17 @@ pub fn parse(cur: &mut Cursor<&[u8]>) -> crate::Result<Command> {
     match tokens.next() {
         Some(Token::Get) => make_get(&mut tokens),
         Some(Token::Set) => make_set(&mut tokens),
-        _ => Err("uhoh".into()),  // TODO informative error, error type
+        _ => Err(Box::new(ParseError {})),
     }
 }
 
-// TODO probably not the errors you want!
 fn parse_token(bytes: Vec<u8>) -> crate::Result<Token> {
     if bytes == b"get".to_vec() {
         Ok(Token::Get)
     } else if bytes == b"set".to_vec() {
         Ok(Token::Set)
     } else {
-        let simple = String::from_utf8(bytes)?;
+        let simple = String::from_utf8(bytes)?.trim().to_string();
         Ok(Token::Simple(simple))
     }
 }

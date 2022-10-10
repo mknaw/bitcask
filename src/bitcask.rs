@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use std::str::from_utf8;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use log::info;
+
 use crate::command;
 use crate::config::Config;
 use crate::keydir::KeyDir;
@@ -12,7 +14,7 @@ use crate::log_manager::{FileLogManager, LogManagerT};
 
 pub struct BitCask<'a> {
     config: &'a Config<'a>,
-    // TODOO probably should just be `dyn LogWriterT`?
+    // TODO probably should just be `dyn LogWriterT`?
     log_manager: FileLogManager<'a>,
     keydir: KeyDir,
 }
@@ -28,6 +30,7 @@ impl<'a> BitCask<'a> {
 
     pub fn set(&mut self, cmd: command::Set) -> crate::Result<()> {
         // TODO probably better to have a single LogWriter with a buffer?
+        info!("{:?}", cmd);
         let entry = Entry::from_set(&cmd)?;
         self.log_manager.write(entry.serialize())?;
         let val_pos: u64 = self.log_manager.position()? - entry.val_sz() as u64;
@@ -41,7 +44,9 @@ impl<'a> BitCask<'a> {
     }
 
     // TODO should take a Command::Get ultimately.
-    pub fn get(&self, key: String) -> crate::Result<String> {
+    pub fn get(&self, cmd: command::Get) -> crate::Result<String> {
+        info!("{:?}", cmd);
+        let command::Get(key) = cmd;
         if let Some(item) = self.keydir.get(&key) {
             let path = self.config.log_dir.join(PathBuf::from(item.file_id.clone()));
             let mut file = File::open(path)?;
