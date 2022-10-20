@@ -97,4 +97,15 @@ impl Entry {
             self.val,
         )
     }
+
+    pub fn serialize_hint(&self, position: u64) -> String {
+        format!(
+            "{},{},{},{},{}",
+            self.ts,
+            self.key_sz(),
+            self.val_sz(),
+            position,
+            self.key,
+        )
+    }
 }

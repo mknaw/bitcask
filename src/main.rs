@@ -16,7 +16,9 @@ mod config;
 mod keydir;
 mod lib;
 mod log_manager;
+mod log_reader;
 mod log_writer;
+mod merge;
 
 #[tokio::main]
 async fn main() -> Result<()> {
