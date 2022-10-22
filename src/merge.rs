@@ -6,7 +6,7 @@ use log::info;
 
 use crate::config::Config;
 use crate::lib::Result;
-use crate::log_reader;
+use crate::log_writer::LogEntry;
 
 pub async fn merge<'a>(config: &'a Config<'a>) -> Result<()> {
     // TODO have to exclude open (mutable) files from this exercise.
@@ -19,7 +19,7 @@ pub async fn merge<'a>(config: &'a Config<'a>) -> Result<()> {
     for path in &paths {
         let file = File::open(path.path())?;
         for line in BufReader::new(file).lines() {
-            let entry = log_reader::parse_entry(line?);
+            let entry = LogEntry::deserialize(&line?);
             match entry {
                 Ok(entry) => {
                     data.insert(entry.key.clone(), entry);

@@ -1,7 +1,10 @@
-use std::{collections::HashMap, ffi::OsString};
 use std::path::PathBuf;
-use crate::bitcask::Entry;
+use std::{collections::HashMap, ffi::OsString};
+
+use log::info;
+
 use crate::log_reader::LogReader;
+use crate::log_writer::LogEntry;
 
 #[derive(PartialEq)]
 pub struct Item {
@@ -23,12 +26,7 @@ impl KeyDir {
         }
     }
 
-    pub fn update(
-        &mut self,
-        file_id: OsString,
-        entry: &Entry,
-        val_pos: u64,
-    ) {
+    pub fn update(&mut self, file_id: OsString, entry: &LogEntry, val_pos: u64) {
         self.data.insert(
             entry.key.clone(),
             Item {
@@ -48,6 +46,7 @@ impl KeyDir {
         let mut keydir = Self::new();
         // TODO have to read the hint files, if they exist, before the original ones.
         for file_id in files {
+            info!("{:?}", file_id);
             let reader = LogReader::new(file_id);
             for item in reader.items() {
                 let (key, item) = item.unwrap();
@@ -64,7 +63,7 @@ mod tests {
 
     use super::{Item, KeyDir};
 
-    use crate::bitcask::Entry;
+    use crate::bitcask::LogEntry;
 
     #[test]
     fn test_happy_update() {
@@ -72,7 +71,7 @@ mod tests {
         // TODO randomize data?
         let key = "key".to_string();
         let file_id: OsString = "file".to_string().into();
-        let entry = Entry {
+        let entry = LogEntry {
             key: key.clone(),
             val: "val".to_string(),
             ts: 1,
