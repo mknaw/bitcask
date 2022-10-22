@@ -26,20 +26,12 @@ impl KeyDir {
         }
     }
 
-    pub fn update(&mut self, file_id: OsString, entry: &LogEntry, val_pos: u64) {
-        self.data.insert(
-            entry.key.clone(),
-            Item {
-                file_id,
-                val_sz: entry.val_sz(),
-                val_pos,
-                ts: entry.ts,
-            },
-        );
-    }
-
     pub fn get(&self, key: &str) -> Option<&Item> {
         return self.data.get(key);
+    }
+
+    pub fn set(&mut self, key: String, item: Item) {
+        self.data.insert(key, item);
     }
 
     pub fn scan(files: Vec<PathBuf>) -> Self {
@@ -49,6 +41,7 @@ impl KeyDir {
             info!("{:?}", file_id);
             let reader = LogReader::new(file_id);
             for item in reader.items() {
+                // TODO shouldn't be unwrapping here!
                 let (key, item) = item.unwrap();
                 keydir.data.insert(key, item);
             }
@@ -77,7 +70,7 @@ mod tests {
             ts: 1,
         };
         let val_pos = 1;
-        state.update(file_id.clone(), &entry, val_pos);
+        state.set(file_id.clone(), &entry, val_pos);
         if let Some(item) = state.get(&key) {
             assert!(
                 item == &(Item {

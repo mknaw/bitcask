@@ -27,6 +27,7 @@ pub enum Token {
 pub enum Command {
     Get(Get),
     Set(Set),
+    // TODO Delete
 }
 
 #[derive(Debug, PartialEq)]

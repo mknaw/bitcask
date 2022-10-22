@@ -1,15 +1,20 @@
 use std::fs::File;
-use std::io::{Seek, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use std::str::from_utf8;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config::Config;
-use crate::log_writer::{LogWriterT, LogWriter};
+use crate::keydir::{Item, KeyDir};
+use crate::log_writer::{LogEntry, LogWriter, LogWriterT};
 
 pub trait LogManagerT {
     type Out: Write + Seek;
-    fn write(&mut self, line: String) -> crate::Result<()>;
-    fn make_new_writer(&mut self) -> crate::Result<LogWriter<Self::Out>>;
+
+    fn write(&mut self, entry: LogEntry) -> crate::Result<Item>;
+    fn initialize_keydir(&self) -> KeyDir;
+    fn get(&self, item: &Item) -> crate::Result<String>;
+    fn position(&mut self) -> crate::Result<u64>;
 }
 
 pub struct FileLogManager<'a> {
@@ -29,7 +34,14 @@ impl<'a> FileLogManager<'a> {
         }
     }
 
-    // TODO "get_inactive_files"?
+    fn make_new_writer(&mut self) -> crate::Result<LogWriter<File>> {
+        let fname = self.generate_fname()?;
+        let path = self.config.log_dir.join(fname);
+        self.current_path = Some(path.clone());
+        let file = File::options().create_new(true).append(true).open(path)?;
+        Ok(LogWriter::new(file))
+    }
+
     pub fn get_closed_files(&self) -> Vec<PathBuf> {
         let mut files = std::fs::read_dir(&self.config.log_dir)
             .unwrap()
@@ -39,7 +51,7 @@ impl<'a> FileLogManager<'a> {
         files.sort();
         files
     }
-    
+
     fn generate_fname(&self) -> crate::Result<String> {
         let ts: u64 = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         // TODO append some random junk to avoid collisions?
@@ -48,12 +60,43 @@ impl<'a> FileLogManager<'a> {
 
     fn need_new_writer(&mut self, line: &str) -> crate::Result<bool> {
         if self.writer.is_none() {
-            return Ok(true);
+            Ok(true)
+        } else {
+            Ok(line.len() as u64 + self.position()? > self.config.max_log_file_size)
         }
-        Ok(line.len() as u64 + self.position()? > self.config.max_log_file_size)
+    }
+}
+
+impl<'cfg> LogManagerT for FileLogManager<'cfg> {
+    type Out = File;
+
+    fn write(&mut self, entry: LogEntry) -> crate::Result<Item> {
+        let line = entry.serialize();
+        if self.need_new_writer(&line)? {
+            self.writer = Some(self.make_new_writer()?);
+        }
+        let writer = self.writer.as_mut().unwrap();
+        // TODO should be able to write it from a reference?
+        writer.write(line.to_string())?;
+        Ok(Item {
+            file_id: self
+                .current_path
+                .as_ref()
+                .unwrap()
+                .as_os_str()
+                .to_os_string(),
+            val_sz: entry.val.len(),
+            val_pos: self.position()? - 1 - entry.val_sz() as u64,
+            ts: entry.ts,
+        })
     }
 
-    pub fn position(&mut self) -> crate::Result<u64> {
+    fn initialize_keydir(&self) -> KeyDir {
+        let files = self.get_closed_files();
+        KeyDir::scan(files)
+    }
+
+    fn position(&mut self) -> crate::Result<u64> {
         if let Some(ref mut writer) = self.writer {
             Ok(writer.stream_position()?)
         } else {
@@ -61,28 +104,16 @@ impl<'a> FileLogManager<'a> {
             Ok(0)
         }
     }
-}
 
-impl<'a> LogManagerT for FileLogManager<'a> {
-    type Out = File;
-
-    fn write(&mut self, line: String) -> crate::Result<()> {
-        if self.need_new_writer(&line)? {
-            self.writer = Some(self.make_new_writer()?);
-        }
-        let writer = self.writer.as_mut().unwrap();
-        writer.write(line)?;
-        Ok(())
-    }
-
-    fn make_new_writer(&mut self) -> crate::Result<LogWriter<Self::Out>> {
-        let fname = self.generate_fname()?;
-        let path = self.config.log_dir.join(fname);
-        self.current_path = Some(path.clone());
-        let file = File::options()
-            .create_new(true)
-            .append(true)
-            .open(path)?;
-        Ok(LogWriter::new(file))
+    fn get(&self, item: &Item) -> crate::Result<String> {
+        let path = self
+            .config
+            .log_dir
+            .join(PathBuf::from(item.file_id.clone()));
+        let mut file = File::open(path)?;
+        file.seek(SeekFrom::Start(item.val_pos))?;
+        let mut buf = vec![0u8; item.val_sz];
+        file.read_exact(&mut buf)?;
+        Ok(from_utf8(&buf[..])?.to_string())
     }
 }

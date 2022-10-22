@@ -2,6 +2,7 @@ use std::io::Cursor;
 
 use bytes::BytesMut;
 use log::info;
+use log_manager::FileLogManager;
 use simple_logger::SimpleLogger;
 use tokio::io::{AsyncReadExt, BufWriter};
 use tokio::net::{TcpListener, TcpStream};
@@ -28,7 +29,8 @@ async fn main() -> Result<()> {
     let socket_addr = config.socket_addr();
     info!("listening on {}", socket_addr);
     let listener = TcpListener::bind(socket_addr).await.unwrap();
-    let mut bitcask = BitCask::new(&config);
+    let log_manager = FileLogManager::new(&config);
+    let mut bitcask = BitCask::new(log_manager);
 
     loop {
         // The second item contains the IP and port of the new connection.
@@ -37,7 +39,7 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn process(bitcask: &mut BitCask<'_>, socket: TcpStream) -> Result<()> {
+async fn process<'cfg>(bitcask: &mut BitCask<FileLogManager<'cfg>>, socket: TcpStream) -> Result<()> {
 
     let mut stream = BufWriter::new(socket);
     let mut buf = BytesMut::with_capacity(4 * 1024);
