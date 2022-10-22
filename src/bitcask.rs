@@ -21,15 +21,16 @@ pub struct BitCask<'a> {
 
 impl<'a> BitCask<'a> {
     pub fn new(config: &'a Config<'a>) -> Self {
+        let log_manager = FileLogManager::new(config);
+        let files = log_manager.get_closed_files();
         Self { 
             config,
-            log_manager: FileLogManager::new(config),
-            keydir: KeyDir::new(),
+            log_manager,
+            keydir: KeyDir::scan(files),
         }
     }
 
     pub fn set(&mut self, cmd: command::Set) -> crate::Result<()> {
-        // TODO probably better to have a single LogWriter with a buffer?
         info!("{:?}", cmd);
         let entry = Entry::from_set(&cmd)?;
         self.log_manager.write(entry.serialize())?;
@@ -43,7 +44,6 @@ impl<'a> BitCask<'a> {
         Ok(())
     }
 
-    // TODO should take a Command::Get ultimately.
     pub fn get(&self, cmd: command::Get) -> crate::Result<String> {
         info!("{:?}", cmd);
         let command::Get(key) = cmd;

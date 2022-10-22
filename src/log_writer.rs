@@ -26,6 +26,7 @@ impl LogWriterT for LogWriter<File> {
     // TODO can we get generic implementation from a ... trait?
     fn write(&mut self, line: String) -> crate::Result<()> {
         self.out.write(line.as_bytes())?;
+        self.out.write("\n".as_bytes())?;
         Ok(())
     }
 

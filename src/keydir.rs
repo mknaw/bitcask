@@ -1,5 +1,7 @@
 use std::{collections::HashMap, ffi::OsString};
+use std::path::PathBuf;
 use crate::bitcask::Entry;
+use crate::log_reader::LogReader;
 
 #[derive(PartialEq)]
 pub struct Item {
@@ -7,7 +9,7 @@ pub struct Item {
     pub val_sz: usize,
     pub val_pos: u64,
     // TODO Should be the actual Rust timestamp type, just convert to whatever for serialization
-    ts: u64,
+    pub ts: u64,
 }
 
 pub struct KeyDir {
@@ -40,6 +42,19 @@ impl KeyDir {
 
     pub fn get(&self, key: &str) -> Option<&Item> {
         return self.data.get(key);
+    }
+
+    pub fn scan(files: Vec<PathBuf>) -> Self {
+        let mut keydir = Self::new();
+        // TODO have to read the hint files, if they exist, before the original ones.
+        for file_id in files {
+            let reader = LogReader::new(file_id);
+            for item in reader.items() {
+                let (key, item) = item.unwrap();
+                keydir.data.insert(key, item);
+            }
+        }
+        keydir
     }
 }
 

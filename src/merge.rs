@@ -19,7 +19,7 @@ pub async fn merge<'a>(config: &'a Config<'a>) -> Result<()> {
     for path in &paths {
         let file = File::open(path.path())?;
         for line in BufReader::new(file).lines() {
-            let entry = log_reader::parse_line(line?);
+            let entry = log_reader::parse_entry(line?);
             match entry {
                 Ok(entry) => {
                     data.insert(entry.key.clone(), entry);

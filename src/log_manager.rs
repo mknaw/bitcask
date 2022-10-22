@@ -28,6 +28,17 @@ impl<'a> FileLogManager<'a> {
             writer: None,
         }
     }
+
+    // TODO "get_inactive_files"?
+    pub fn get_closed_files(&self) -> Vec<PathBuf> {
+        let mut files = std::fs::read_dir(&self.config.log_dir)
+            .unwrap()
+            .map(|res| res.map(|e| e.path()))
+            .collect::<Result<Vec<_>, std::io::Error>>()
+            .unwrap();
+        files.sort();
+        files
+    }
     
     fn generate_fname(&self) -> crate::Result<String> {
         let ts: u64 = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
