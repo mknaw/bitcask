@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, Seek, Write};
 use log::info;
 
 use crate::config::Config;
-use crate::lib::Result;
+use crate::Result;
 use crate::log_writer::LogEntry;
 
 pub async fn merge<'a>(config: &'a Config<'a>) -> Result<()> {
@@ -33,7 +33,7 @@ pub async fn merge<'a>(config: &'a Config<'a>) -> Result<()> {
 
     // TODO has to be a nicer API to just get the file name sans extension
     let last = paths.last().unwrap().path().to_str().unwrap().to_owned();
-    let last_ts = last.split(".").next().unwrap();
+    let last_ts = last.split('.').next().unwrap();
     // TODO what happens if this merge file exists already?
     let mut merge_file = File::options()
         .create_new(true)
@@ -45,10 +45,10 @@ pub async fn merge<'a>(config: &'a Config<'a>) -> Result<()> {
         .open(format!("{}.hint", last_ts))?;
 
    for entry in data.values() {
-        merge_file.write(entry.serialize().as_bytes())?;
+        merge_file.write_all(entry.serialize().as_bytes())?;
         let pos = merge_file.stream_position()? - entry.val_sz() as u64;
-        merge_file.write(b"\n")?; // TODO do we really need this?
-        hint_file.write(entry.serialize_hint(pos).as_bytes())?;
+        merge_file.write_all(b"\n")?; // TODO do we really need this?
+        hint_file.write_all(entry.serialize_hint(pos).as_bytes())?;
     }
 
     for path in &paths {

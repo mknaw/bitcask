@@ -2,6 +2,8 @@ use std::fmt;
 use std::io::{Cursor, BufRead};
 use std::vec::IntoIter;
 
+// TODO try `nom`, just for shits?
+
 #[derive(Debug)]
 pub struct ParseError;
 
@@ -88,11 +90,9 @@ pub fn parse_tokens(cur: &mut Cursor<&[u8]>) -> Vec<Token> {
     cur.position();
     let cur_iter = cur.split(b' ');
     let mut tokens = vec![];
-    for res in cur_iter {
-        if let Ok(bytes) = res {
-            if let Ok(token) = parse_token(bytes) {
-                tokens.push(token);
-            }
+    for bytes in cur_iter.flatten() {
+        if let Ok(token) = parse_token(bytes) {
+            tokens.push(token);
         }
     }
 

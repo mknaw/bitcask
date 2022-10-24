@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -11,8 +12,19 @@ use crate::log_writer::{LogEntry, LogWriter, LogWriterT};
 pub trait LogManagerT {
     type Out: Write + Seek;
 
-    fn write(&mut self, entry: LogEntry) -> crate::Result<Item>;
     fn initialize_keydir(&self) -> KeyDir;
+    fn get_file_id(&self) -> OsString;
+    fn set(&mut self, entry: LogEntry) -> crate::Result<Item> {
+        let line = entry.serialize();
+        self.write(line)?;
+        Ok(Item {
+            file_id: self.get_file_id(),
+            val_sz: entry.val.len(),
+            val_pos: self.position()? - 1 - entry.val_sz() as u64,
+            ts: entry.ts,
+        })
+    }
+    fn write(&mut self, line: String) -> crate::Result<()>;
     fn get(&self, item: &Item) -> crate::Result<String>;
     fn position(&mut self) -> crate::Result<u64>;
 }
@@ -70,29 +82,27 @@ impl<'a> FileLogManager<'a> {
 impl<'cfg> LogManagerT for FileLogManager<'cfg> {
     type Out = File;
 
-    fn write(&mut self, entry: LogEntry) -> crate::Result<Item> {
-        let line = entry.serialize();
+    fn write(&mut self, line: String) -> crate::Result<()> {
         if self.need_new_writer(&line)? {
             self.writer = Some(self.make_new_writer()?);
         }
         let writer = self.writer.as_mut().unwrap();
         // TODO should be able to write it from a reference?
         writer.write(line.to_string())?;
-        Ok(Item {
-            file_id: self
-                .current_path
-                .as_ref()
-                .unwrap()
-                .as_os_str()
-                .to_os_string(),
-            val_sz: entry.val.len(),
-            val_pos: self.position()? - 1 - entry.val_sz() as u64,
-            ts: entry.ts,
-        })
+        Ok(())
+    }
+
+    fn get_file_id(&self) -> OsString {
+        self.current_path
+            .as_ref()
+            .unwrap()
+            .as_os_str()
+            .to_os_string()
     }
 
     fn initialize_keydir(&self) -> KeyDir {
         let files = self.get_closed_files();
+        // TODO the contents of `scan` should probably be moved here.
         KeyDir::scan(files)
     }
 

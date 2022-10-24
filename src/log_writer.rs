@@ -7,7 +7,7 @@ use crc::{Crc, CRC_32_ISCSI};
 use log::info;
 
 use crate::command;
-use crate::lib::Result;
+use crate::Result;
 
 // TODO investigate if this is the correct algorithm
 const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
@@ -106,8 +106,8 @@ impl LogWriterT for LogWriter<File> {
 
     // TODO can we get generic implementation from a ... trait?
     fn write(&mut self, line: String) -> Result<()> {
-        self.out.write(line.as_bytes())?;
-        self.out.write("\n".as_bytes())?;
+        self.out.write_all(line.as_bytes())?;
+        self.out.write_all("\n".as_bytes())?;
         Ok(())
     }
 
@@ -124,28 +124,5 @@ impl LogWriter<File> {
     // So we don't have to pass around config stuff (max file size).
     pub fn is_full(&self) -> Result<bool> {
         todo!();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::io::Cursor;
-    use std::str;
-
-    use super::LogWriter;
-
-    #[test]
-    fn test_happy_set() {
-        let mut buf = Vec::new();
-        let cur = Cursor::new(&mut buf);
-        let mut writer = LogWriter::new(cur);
-        // TODO have to implement test log_writer?
-        if writer.write("foo".to_string()).is_ok() {
-            let out = writer.out.into_inner();
-            let line = str::from_utf8(&out).unwrap();
-            assert!(line.ends_with("foo"));
-        } else {
-            assert!(false);
-        }
     }
 }

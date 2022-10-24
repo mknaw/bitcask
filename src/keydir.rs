@@ -4,7 +4,6 @@ use std::{collections::HashMap, ffi::OsString};
 use log::info;
 
 use crate::log_reader::LogReader;
-use crate::log_writer::LogEntry;
 
 #[derive(PartialEq)]
 pub struct Item {
@@ -15,19 +14,14 @@ pub struct Item {
     pub ts: u64,
 }
 
+#[derive(Default)]
 pub struct KeyDir {
     data: HashMap<String, Item>,
 }
 
 impl KeyDir {
-    pub fn new() -> Self {
-        Self {
-            data: HashMap::new(),
-        }
-    }
-
     pub fn get(&self, key: &str) -> Option<&Item> {
-        return self.data.get(key);
+        self.data.get(key)
     }
 
     pub fn set(&mut self, key: String, item: Item) {
@@ -35,7 +29,7 @@ impl KeyDir {
     }
 
     pub fn scan(files: Vec<PathBuf>) -> Self {
-        let mut keydir = Self::new();
+        let mut keydir = Self::default();
         // TODO have to read the hint files, if they exist, before the original ones.
         for file_id in files {
             info!("{:?}", file_id);
@@ -47,41 +41,5 @@ impl KeyDir {
             }
         }
         keydir
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::ffi::OsString;
-
-    use super::{Item, KeyDir};
-
-    use crate::bitcask::LogEntry;
-
-    #[test]
-    fn test_happy_update() {
-        let mut state = KeyDir::new();
-        // TODO randomize data?
-        let key = "key".to_string();
-        let file_id: OsString = "file".to_string().into();
-        let entry = LogEntry {
-            key: key.clone(),
-            val: "val".to_string(),
-            ts: 1,
-        };
-        let val_pos = 1;
-        state.set(file_id.clone(), &entry, val_pos);
-        if let Some(item) = state.get(&key) {
-            assert!(
-                item == &(Item {
-                    file_id,
-                    val_sz: entry.val_sz(),
-                    val_pos,
-                    ts: entry.ts,
-                })
-            );
-        } else {
-            assert!(false);
-        }
     }
 }

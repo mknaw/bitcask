@@ -3,7 +3,7 @@ use std::fs::File;
 use std::path::{PathBuf, Path};
 
 use crate::keydir::Item;
-use crate::lib::Result;
+use crate::Result;
 use crate::log_writer::LogEntry;
 
 pub struct LogReader {

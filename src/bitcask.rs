@@ -2,13 +2,11 @@ use log::info;
 
 use crate::command;
 use crate::keydir::KeyDir;
-use crate::lib::Result;
 use crate::log_manager::LogManagerT;
 use crate::log_writer::LogEntry;
+use crate::Result;
 
 pub struct BitCask<LM: LogManagerT> {
-    // config: &'cfg Config<'cfg>,
-    // TODO probably should just be `dyn LogWriterT`?
     log_manager: LM,
     keydir: KeyDir,
 }
@@ -26,7 +24,7 @@ impl<LM: LogManagerT> BitCask<LM> {
         info!("{:?}", cmd);
         let entry = LogEntry::from_set_command(&cmd)?;
         let key = entry.key.clone();
-        let item = self.log_manager.write(entry)?;
+        let item = self.log_manager.set(entry)?;
         self.keydir.set(key, item);
         Ok(())
     }
