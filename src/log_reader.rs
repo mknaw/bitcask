@@ -1,10 +1,10 @@
-use std::io::{BufRead, Lines, BufReader};
 use std::fs::File;
-use std::path::{PathBuf, Path};
+use std::io::{BufRead, BufReader, Lines};
+use std::path::{Path, PathBuf};
 
 use crate::keydir::Item;
-use crate::Result;
 use crate::log_writer::LogEntry;
+use crate::Result;
 
 pub struct LogReader {
     path: PathBuf,
@@ -12,9 +12,7 @@ pub struct LogReader {
 
 impl LogReader {
     pub fn new(path: PathBuf) -> Self {
-        Self {
-            path
-        }
+        Self { path }
     }
 
     fn open(&self) -> Result<File> {
@@ -55,12 +53,15 @@ impl<'a> Iterator for ItemIterator<'a> {
             self.position += line.len();
             let entry = LogEntry::deserialize(&line).ok()?;
             let val_sz = entry.val.len();
-            Some(Ok((entry.key, Item {
-                file_id: self.path.as_os_str().to_os_string(),
-                val_sz,
-                val_pos: (self.position - val_sz) as u64,
-                ts: entry.ts,
-            })))
+            Some(Ok((
+                entry.key,
+                Item {
+                    file_id: self.path.as_os_str().to_os_string(),
+                    val_sz,
+                    val_pos: (self.position - val_sz) as u64,
+                    ts: entry.ts,
+                },
+            )))
         } else {
             None
         }

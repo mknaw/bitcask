@@ -5,8 +5,8 @@ use std::io::{BufRead, BufReader, Seek, Write};
 use log::info;
 
 use crate::config::Config;
-use crate::Result;
 use crate::log_writer::LogEntry;
+use crate::Result;
 
 pub async fn merge<'a>(config: &'a Config<'a>) -> Result<()> {
     // TODO have to exclude open (mutable) files from this exercise.
@@ -44,7 +44,7 @@ pub async fn merge<'a>(config: &'a Config<'a>) -> Result<()> {
         .append(true)
         .open(format!("{}.hint", last_ts))?;
 
-   for entry in data.values() {
+    for entry in data.values() {
         merge_file.write_all(entry.serialize().as_bytes())?;
         let pos = merge_file.stream_position()? - entry.val_sz() as u64;
         merge_file.write_all(b"\n")?; // TODO do we really need this?

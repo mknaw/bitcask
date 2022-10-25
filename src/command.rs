@@ -1,5 +1,5 @@
 use std::fmt;
-use std::io::{Cursor, BufRead};
+use std::io::{BufRead, Cursor};
 use std::vec::IntoIter;
 
 // TODO try `nom`, just for shits?
@@ -35,13 +35,11 @@ pub enum Command {
 #[derive(Debug, PartialEq)]
 pub struct Get(pub String);
 
-
 #[derive(Debug, PartialEq)]
 pub struct Set {
     pub key: String,
     pub val: String,
 }
-
 
 fn make_get(tokens: &mut IntoIter<Token>) -> crate::Result<Command> {
     // Extract a `Command::Get` from `tokens`.
@@ -101,14 +99,17 @@ pub fn parse_tokens(cur: &mut Cursor<&[u8]>) -> Vec<Token> {
 
 #[cfg(test)]
 mod tests {
+    use super::{parse, Command, Get, Set};
     use std::io::Cursor;
-    use super::{Command, Get, Set, parse};
 
     #[test]
     fn test_parse_error() {
         let buf: &[u8] = b"foo bar";
         let mut cur = Cursor::new(buf);
-        assert!(parse(&mut cur).is_err(), "should not have parsed successfully");
+        assert!(
+            parse(&mut cur).is_err(),
+            "should not have parsed successfully"
+        );
     }
 
     #[test]
@@ -125,7 +126,10 @@ mod tests {
     fn test_get_parse_error() {
         let buf: &[u8] = b"get foo bar";
         let mut cur = Cursor::new(buf);
-        assert!(parse(&mut cur).is_err(), "should not have parsed successfully");
+        assert!(
+            parse(&mut cur).is_err(),
+            "should not have parsed successfully"
+        );
     }
 
     #[test]
@@ -136,7 +140,7 @@ mod tests {
             Ok(Command::Set(Set { key, val })) => {
                 assert!(key == "foo".to_string());
                 assert!(val == "bar".to_string());
-            },
+            }
             _ => assert!(false),
         }
     }
@@ -145,6 +149,9 @@ mod tests {
     fn test_set_parse_error() {
         let buf: &[u8] = b"set foo bar baz";
         let mut cur = Cursor::new(buf);
-        assert!(parse(&mut cur).is_err(), "should not have parsed successfully");
+        assert!(
+            parse(&mut cur).is_err(),
+            "should not have parsed successfully"
+        );
     }
 }

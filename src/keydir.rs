@@ -1,7 +1,7 @@
 use std::path::PathBuf;
-use std::{collections::HashMap, ffi::OsString};
 
 use log::info;
+use std::{collections::HashMap, ffi::OsString};
 
 use crate::log_reader::LogReader;
 
