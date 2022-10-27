@@ -29,7 +29,6 @@ impl LogManagerT for TestLogManager {
 
     fn write(&mut self, line: String) -> Result<()> {
         self.log.write(line.as_bytes())?;
-        self.log.write("\n".as_bytes())?;
         Ok(())
     }
 

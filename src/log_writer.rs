@@ -30,44 +30,40 @@ impl LogEntry {
         })
     }
 
-    pub fn key_sz(&self) -> usize {
-        self.key.as_bytes().len()
+    pub fn key_sz(&self) -> u64 {
+        self.key.as_bytes().len() as u64
     }
 
-    pub fn val_sz(&self) -> usize {
-        self.val.as_bytes().len()
+    pub fn val_sz(&self) -> u64 {
+        self.val.as_bytes().len() as u64
     }
 
     pub fn serialize(&self) -> String {
-        // TODO do we even need to comma separate?
         let s = format!(
-            "{},{},{},{},{}",
+            "{:016x}{:016x}{:016x}{}{}",
             self.ts,
             self.key_sz(),
             self.val_sz(),
             self.key,
             self.val,
         );
-        format!("{},{}", CRC.checksum(s.as_bytes()), s)
+        let crc = CRC.checksum(s.as_bytes());
+        format!("{:08x}{}", crc, s)
     }
 
     pub fn deserialize(s: &str) -> Result<Self> {
-        let mut parts = s.splitn(2, ',');
-        // TODO probably shouldn't unwrap - might panic?
-        let crc = parts.next().unwrap().parse::<u32>()?;
-        let rest = parts.next().unwrap();
-        if crc != CRC.checksum(rest.as_bytes()) {
-            info!("{}", rest);
+        let crc = u32::from_str_radix(&s[..8], 16)?;
+        if crc != CRC.checksum(&s[8..].as_bytes()) {
             // TODO should be a special CRC error
             return Err("CRC mismatch".into());
         }
 
-        let mut parts = rest.split(',');
-        let ts = parts.next().unwrap().parse::<u64>()?;
-        let _ = parts.next().unwrap().parse::<usize>()?;
-        let _ = parts.next().unwrap().parse::<usize>()?;
-        let key = parts.next().unwrap().to_string();
-        let val = parts.next().unwrap().to_string();
+        let ts = u64::from_str_radix(&s[8..24], 16)?;
+        let key_sz = u64::from_str_radix(&s[24..40], 16)?;
+        let val_sz = u64::from_str_radix(&s[40..56], 16)?;
+        let key_end = 56 + key_sz as usize;
+        let key = s[56..key_end].to_string();
+        let val = s[key_end..key_end + val_sz as usize].to_string();
         Ok(Self { key, val, ts })
     }
 
@@ -107,7 +103,6 @@ impl LogWriterT for LogWriter<File> {
     // TODO can we get generic implementation from a ... trait?
     fn write(&mut self, line: String) -> Result<()> {
         self.out.write_all(line.as_bytes())?;
-        self.out.write_all("\n".as_bytes())?;
         Ok(())
     }
 

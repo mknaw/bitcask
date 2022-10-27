@@ -12,6 +12,7 @@ use bitcask::config::Config;
 use bitcask::log_manager::FileLogManager;
 use bitcask::Result;
 
+// TODO this should be a server, the bitcask itself should be a library crate.
 #[tokio::main]
 async fn main() -> Result<()> {
     SimpleLogger::new().init().unwrap();

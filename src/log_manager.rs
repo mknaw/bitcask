@@ -20,7 +20,7 @@ pub trait LogManagerT {
         Ok(Item {
             file_id: self.get_file_id(),
             val_sz: entry.val.len(),
-            val_pos: self.position()? - 1 - entry.val_sz() as u64,
+            val_pos: self.position()? - entry.val_sz() as u64,
             ts: entry.ts,
         })
     }
