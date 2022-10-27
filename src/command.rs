@@ -23,12 +23,14 @@ impl ::std::error::Error for ParseError {
 pub enum Token {
     Get,
     Set,
+    Delete,
     Simple(String),
 }
 
 pub enum Command {
     Get(Get),
     Set(Set),
+    Delete(Delete),
     // TODO Delete
 }
 
@@ -41,11 +43,24 @@ pub struct Set {
     pub val: String,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct Delete(pub String);
+
 fn make_get(tokens: &mut IntoIter<Token>) -> crate::Result<Command> {
     // Extract a `Command::Get` from `tokens`.
     if let Some(Token::Simple(s)) = tokens.next() {
         if tokens.next().is_none() {
             return Ok(Command::Get(Get(s)));
+        }
+    }
+    Err(Box::new(ParseError {}))
+}
+
+fn make_delete(tokens: &mut IntoIter<Token>) -> crate::Result<Command> {
+    // Extract a `Command::Delete` from `tokens`.
+    if let Some(Token::Simple(s)) = tokens.next() {
+        if tokens.next().is_none() {
+            return Ok(Command::Delete(Delete(s)));
         }
     }
     Err(Box::new(ParseError {}))
@@ -69,6 +84,7 @@ pub fn parse(cur: &mut Cursor<&[u8]>) -> crate::Result<Command> {
     match tokens.next() {
         Some(Token::Get) => make_get(&mut tokens),
         Some(Token::Set) => make_set(&mut tokens),
+        Some(Token::Delete) => make_delete(&mut tokens),
         _ => Err(Box::new(ParseError {})),
     }
 }
@@ -78,6 +94,8 @@ fn parse_token(bytes: Vec<u8>) -> crate::Result<Token> {
         Ok(Token::Get)
     } else if bytes == b"set".to_vec() {
         Ok(Token::Set)
+    } else if bytes == b"delete".to_vec() {
+        Ok(Token::Delete)
     } else {
         let simple = String::from_utf8(bytes)?.trim().to_string();
         Ok(Token::Simple(simple))

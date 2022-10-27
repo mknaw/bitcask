@@ -4,7 +4,6 @@ use std::io::{Seek, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crc::{Crc, CRC_32_ISCSI};
-use log::info;
 
 use crate::command;
 use crate::Result;

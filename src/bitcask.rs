@@ -1,10 +1,26 @@
 use log::info;
+use std::fmt;
 
 use crate::command;
 use crate::keydir::KeyDir;
 use crate::log_manager::LogManagerT;
 use crate::log_writer::LogEntry;
 use crate::Result;
+
+#[derive(Debug)]
+struct KeyMiss(String);
+
+impl std::error::Error for KeyMiss {
+    fn description(&self) -> &str {
+        "key miss"
+    }
+}
+
+impl fmt::Display for KeyMiss {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "KeyMiss: {}", self.0)
+    }
+}
 
 pub struct BitCask<LM: LogManagerT> {
     log_manager: LM,
@@ -33,10 +49,20 @@ impl<LM: LogManagerT> BitCask<LM> {
         info!("{:?}", cmd);
         let command::Get(key) = cmd;
         if let Some(item) = self.keydir.get(&key) {
-            Ok(self.log_manager.get(item)?)
-        } else {
-            // TODO should be a special miss error
-            Err("Miss".into())
+            let value = self.log_manager.get(item)?;
+            if !crate::is_tombstone(&value) {
+                return Ok(value);
+            }
         }
+        Err(KeyMiss(key).into())
+    }
+
+    pub fn delete(&mut self, cmd: command::Delete) -> Result<()> {
+        info!("{:?}", cmd);
+        let command::Delete(key) = cmd;
+        self.set(command::Set {
+            key,
+            val: crate::TOMBSTONE.to_string(),
+        })
     }
 }

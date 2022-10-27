@@ -3,7 +3,7 @@ use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::str::from_utf8;
 
 use bitcask::bitcask::BitCask;
-use bitcask::command::{Get, Set};
+use bitcask::command::{Delete, Get, Set};
 use bitcask::keydir::{Item, KeyDir};
 use bitcask::log_manager::LogManagerT;
 use bitcask::Result;
@@ -71,4 +71,7 @@ fn test_happy_bitcask() {
         .unwrap();
     assert_eq!(bitcask.get(Get("foo".to_string())).unwrap(), "bar");
     assert_eq!(bitcask.get(Get("baz".to_string())).unwrap(), "quux");
+    bitcask.delete(Delete("foo".to_string())).unwrap();
+    // TODO should actually verify that it is a `KeyMiss`.
+    assert!(bitcask.get(Get("foo".to_string())).is_err());
 }

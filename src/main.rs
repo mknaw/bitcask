@@ -41,9 +41,11 @@ async fn process<'cfg>(
     let mut cur = Cursor::new(&buf[..]);
     match command::parse(&mut cur) {
         Ok(Command::Set(set)) => bitcask.set(set)?,
-        Ok(Command::Get(get)) => {
-            info!("{}", bitcask.get(get)?);
-        }
+        Ok(Command::Get(get)) => match bitcask.get(get) {
+            Ok(val) => info!("{}", val),
+            Err(e) => info!("{:?}", e),
+        },
+        Ok(Command::Delete(delete)) => bitcask.delete(delete)?,
         Err(e) => {
             info!("{}", e);
         }
