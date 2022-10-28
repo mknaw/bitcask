@@ -1,44 +1,43 @@
-use std::fs::File;
-use std::io::{BufReader, Read};
-use std::path::{Path, PathBuf};
+use std::{
+    fs::File,
+    io::{BufReader, Read, Seek, SeekFrom},
+    str::from_utf8,
+};
 
-use log::info;
+use log::{debug, info};
 
-use crate::keydir::Item;
-use crate::log_writer::LogEntry;
-use crate::Result;
+use crate::{log::LogEntry, Result};
 
-pub struct LogReader {
-    path: PathBuf,
+pub struct LogFile {
+    file: File,
 }
 
-impl LogReader {
-    pub fn new(path: PathBuf) -> Self {
-        Self { path }
+impl LogFile {
+    pub fn new(file: File) -> Self {
+        Self { file }
     }
 
-    fn open(&self) -> Result<File> {
-        let file = File::open(&self.path)?;
-        Ok(file)
+    pub fn read(&mut self, from: u64, len: usize) -> Result<String> {
+        self.file.seek(SeekFrom::Start(from))?;
+        let mut buf = vec![0u8; len];
+        self.file.read_exact(&mut buf)?;
+        Ok(from_utf8(&buf[..])?.to_string())
     }
 
-    pub fn items(&self) -> ItemIterator {
-        let file = self.open().unwrap();
-        let reader = BufReader::new(file);
-        ItemIterator::new(self.path.as_ref(), reader)
+    pub fn items(&mut self) -> ItemIterator {
+        let reader = BufReader::new(&self.file);
+        ItemIterator::new(reader)
     }
 }
 
 pub struct ItemIterator<'a> {
-    path: &'a Path,
-    reader: BufReader<File>,
+    reader: BufReader<&'a File>,
     position: usize,
 }
 
 impl<'a> ItemIterator<'a> {
-    pub fn new(path: &'a Path, reader: BufReader<File>) -> Self {
+    pub fn new(reader: BufReader<&'a File>) -> Self {
         Self {
-            path,
             reader,
             position: 0,
         }
@@ -46,7 +45,7 @@ impl<'a> ItemIterator<'a> {
 }
 
 impl<'a> Iterator for ItemIterator<'a> {
-    type Item = Result<(String, Item)>;
+    type Item = Result<(LogEntry, u64)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         // TODO not very pretty
@@ -86,19 +85,11 @@ impl<'a> Iterator for ItemIterator<'a> {
             return None;
         }
 
-        info!(
+        debug!(
             "crc: {:?}, ts: {:?}, key_sz: {:?}, val_sz: {:?}, key: {:?}, val: {:?}",
             crc, ts, key_sz, val_sz, key, val
         );
 
-        Some(Ok((
-            key.to_string(),
-            Item {
-                file_id: self.path.as_os_str().to_os_string(),
-                val_sz,
-                val_pos: (self.position - val_sz) as u64,
-                ts,
-            },
-        )))
+        Some(Ok((entry, (self.position - val_sz) as u64)))
     }
 }

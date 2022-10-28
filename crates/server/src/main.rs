@@ -6,13 +6,12 @@ use simple_logger::SimpleLogger;
 use tokio::io::{AsyncReadExt, BufWriter};
 use tokio::net::{TcpListener, TcpStream};
 
-use bitcask::bitcask::BitCask;
-use bitcask::command::{self, Command};
-use bitcask::config::Config;
-use bitcask::log_manager::FileLogManager;
-use bitcask::Result;
+use store::{BitCask, Config, FileLogManager, Result};
 
-// TODO this should be a server, the bitcask itself should be a library crate.
+mod command;
+
+use command::{Command, Delete, Get, Set};
+
 #[tokio::main]
 async fn main() -> Result<()> {
     SimpleLogger::new().init().unwrap();
@@ -21,7 +20,9 @@ async fn main() -> Result<()> {
     let socket_addr = config.socket_addr();
     info!("listening on {}", socket_addr);
     let listener = TcpListener::bind(socket_addr).await.unwrap();
-    let log_manager = FileLogManager::new(&config);
+    // TODO probably should be an initializer that just take config and returns a
+    // `BitCask<Whatever>`; this crate shouldn't have to worry about internals.
+    let log_manager = FileLogManager::new(&config).unwrap();
     let mut bitcask = BitCask::new(log_manager);
 
     loop {
@@ -40,12 +41,12 @@ async fn process<'cfg>(
     stream.read_buf(&mut buf).await?;
     let mut cur = Cursor::new(&buf[..]);
     match command::parse(&mut cur) {
-        Ok(Command::Set(set)) => bitcask.set(set)?,
-        Ok(Command::Get(get)) => match bitcask.get(get) {
+        Ok(Command::Set(Set { key, val })) => bitcask.set(&key, &val)?,
+        Ok(Command::Get(Get(get))) => match bitcask.get(&get) {
             Ok(val) => info!("{}", val),
             Err(e) => info!("{:?}", e),
         },
-        Ok(Command::Delete(delete)) => bitcask.delete(delete)?,
+        Ok(Command::Delete(Delete(key))) => bitcask.delete(&key)?,
         Err(e) => {
             info!("{}", e);
         }

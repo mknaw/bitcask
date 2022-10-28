@@ -5,7 +5,6 @@ pub struct Item {
     pub file_id: OsString,
     pub val_sz: usize,
     pub val_pos: u64,
-    // TODO Should be the actual Rust timestamp type, just convert to whatever for serialization
     pub ts: u64,
 }
 

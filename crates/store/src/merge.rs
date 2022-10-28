@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Seek, Write};
-
-use log::info;
+use std::io::{Seek, Write};
 
 use crate::config::Config;
-use crate::log_writer::LogEntry;
+use crate::log::LogEntry;
 use crate::Result;
 
+// TODO have to iterate over all files in ts-order, then compare against keydir
+// and only record non-expired entries. Check again the special handling for no
+// keydirs and tombstones.
 pub async fn merge<'a>(config: &'a Config<'a>) -> Result<()> {
     // TODO have to exclude open (mutable) files from this exercise.
     let mut paths: Vec<_> = fs::read_dir(config.log_dir)?

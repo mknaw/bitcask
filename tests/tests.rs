@@ -2,11 +2,10 @@ use std::ffi::OsString;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::str::from_utf8;
 
-use bitcask::bitcask::BitCask;
-use bitcask::command::{Delete, Get, Set};
-use bitcask::keydir::{Item, KeyDir};
-use bitcask::log_manager::LogManagerT;
-use bitcask::Result;
+use store::bitcask::BitCask;
+use store::keydir::{Item, KeyDir};
+use store::log::manager::LogManagerT;
+use store::Result;
 
 struct TestLogManager {
     log: Cursor<Vec<u8>>,
@@ -32,11 +31,11 @@ impl LogManagerT for TestLogManager {
         Ok(())
     }
 
-    fn initialize_keydir(&self) -> KeyDir {
+    fn initialize_keydir(&mut self) -> KeyDir {
         KeyDir::default()
     }
 
-    fn get(&self, item: &Item) -> crate::Result<String> {
+    fn get(&mut self, item: &Item) -> crate::Result<String> {
         // TODO the clone here is hardly ideal!
         let mut log = self.log.clone();
         log.seek(SeekFrom::Start(item.val_pos))?;
@@ -57,21 +56,15 @@ fn init_test_bitcask() -> BitCask<TestLogManager> {
 #[test]
 fn test_happy_bitcask() {
     let mut bitcask = init_test_bitcask();
-    bitcask
-        .set(Set {
-            key: "foo".to_string(),
-            val: "bar".to_string(),
-        })
-        .unwrap();
-    bitcask
-        .set(Set {
-            key: "baz".to_string(),
-            val: "quux".to_string(),
-        })
-        .unwrap();
-    assert_eq!(bitcask.get(Get("foo".to_string())).unwrap(), "bar");
-    assert_eq!(bitcask.get(Get("baz".to_string())).unwrap(), "quux");
-    bitcask.delete(Delete("foo".to_string())).unwrap();
-    // TODO should actually verify that it is a `KeyMiss`.
-    assert!(bitcask.get(Get("foo".to_string())).is_err());
+    let key1 = "foo";
+    let val1 = "bar";
+    let key2 = "baz";
+    let val2 = "quux\n\nand\n\nother\n\nstuff\n\ntoo";
+    bitcask.set(key1, val1).unwrap();
+    bitcask.set(key2, val2).unwrap();
+    assert_eq!(bitcask.get(key1).unwrap(), val1);
+    assert_eq!(bitcask.get(key1).unwrap(), val1);
+    bitcask.delete(key1).unwrap();
+    let error = bitcask.get(key1).err().unwrap();
+    assert!(error.is::<store::bitcask::KeyMiss>());
 }

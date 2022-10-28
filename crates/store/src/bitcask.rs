@@ -1,14 +1,15 @@
-use log::info;
+use log::debug;
 use std::fmt;
 
-use crate::command;
 use crate::keydir::KeyDir;
-use crate::log_manager::LogManagerT;
-use crate::log_writer::LogEntry;
+use crate::log::manager::LogManagerT;
+use crate::log::LogEntry;
 use crate::Result;
 
+// TODO should this one be a &str?
+// TODO reexport under `store::errors::...`?
 #[derive(Debug)]
-struct KeyMiss(String);
+pub struct KeyMiss(String);
 
 impl std::error::Error for KeyMiss {
     fn description(&self) -> &str {
@@ -28,7 +29,7 @@ pub struct BitCask<LM: LogManagerT> {
 }
 
 impl<LM: LogManagerT> BitCask<LM> {
-    pub fn new(log_manager: LM) -> Self {
+    pub fn new(mut log_manager: LM) -> Self {
         let keydir = log_manager.initialize_keydir();
         Self {
             log_manager,
@@ -36,33 +37,29 @@ impl<LM: LogManagerT> BitCask<LM> {
         }
     }
 
-    pub fn set(&mut self, cmd: command::Set) -> Result<()> {
-        info!("{:?}", cmd);
-        let entry = LogEntry::from_set_command(&cmd)?;
+    pub fn set(&mut self, key: &str, val: &str) -> Result<()> {
+        debug!("Set {} to {}", key, val);
+        let entry = LogEntry::from_set(key, val)?;
         let key = entry.key.clone();
         let item = self.log_manager.set(entry)?;
         self.keydir.set(key, item);
         Ok(())
     }
 
-    pub fn get(&self, cmd: command::Get) -> Result<String> {
-        info!("{:?}", cmd);
-        let command::Get(key) = cmd;
-        if let Some(item) = self.keydir.get(&key) {
+    // TODO should it be a `&str` here?
+    pub fn get(&mut self, key: &str) -> Result<String> {
+        debug!("Get {}", key);
+        if let Some(item) = self.keydir.get(key) {
             let value = self.log_manager.get(item)?;
             if !crate::is_tombstone(&value) {
                 return Ok(value);
             }
         }
-        Err(KeyMiss(key).into())
+        Err(KeyMiss(key.to_string()).into())
     }
 
-    pub fn delete(&mut self, cmd: command::Delete) -> Result<()> {
-        info!("{:?}", cmd);
-        let command::Delete(key) = cmd;
-        self.set(command::Set {
-            key,
-            val: crate::TOMBSTONE.to_string(),
-        })
+    pub fn delete(&mut self, key: &str) -> Result<()> {
+        debug!("Delete {}", key);
+        self.set(key, crate::TOMBSTONE)
     }
 }

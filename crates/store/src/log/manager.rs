@@ -1,21 +1,22 @@
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Seek, Write};
 use std::path::PathBuf;
-use std::str::from_utf8;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use log::info;
+use log::error;
 
 use crate::config::Config;
 use crate::keydir::{Item, KeyDir};
-use crate::log_reader::LogReader;
-use crate::log_writer::{LogEntry, LogWriter, LogWriterT};
+use crate::log::read_file::LogFile;
+use crate::log::write_file::{LogWriter, LogWriterT};
+use crate::log::LogEntry;
 
 pub trait LogManagerT {
     type Out: Write + Seek;
 
-    fn initialize_keydir(&self) -> KeyDir;
+    fn initialize_keydir(&mut self) -> KeyDir;
     fn get_file_id(&self) -> OsString;
     fn set(&mut self, entry: LogEntry) -> crate::Result<Item> {
         let line = entry.serialize_with_crc();
@@ -28,7 +29,7 @@ pub trait LogManagerT {
         })
     }
     fn write(&mut self, line: String) -> crate::Result<()>;
-    fn get(&self, item: &Item) -> crate::Result<String>;
+    fn get(&mut self, item: &Item) -> crate::Result<String>;
     fn position(&mut self) -> crate::Result<u64>;
 }
 
@@ -36,17 +37,44 @@ pub struct FileLogManager<'a> {
     config: &'a Config<'a>,
     pub current_path: Option<PathBuf>,
     writer: Option<LogWriter<File>>,
+    read_files: BTreeMap<OsString, LogFile>,
 }
 
-// TODO implement locking?
+// TODO implement locking
 impl<'a> FileLogManager<'a> {
-    pub fn new(config: &'a Config<'a>) -> Self {
-        Self {
+    pub fn new(config: &'a Config<'a>) -> crate::Result<Self> {
+        let mut manager = Self {
             config,
             // TODO this shouldn't really live here... probably
             current_path: None,
             writer: None,
+            read_files: Default::default(),
+        };
+        manager.initialize_read_files()?;
+        Ok(manager)
+    }
+
+    fn initialize_read_files(&mut self) -> crate::Result<()> {
+        for path in self.get_read_file_paths()? {
+            match File::options().read(true).write(false).open(&path) {
+                Ok(file) => {
+                    self.read_files
+                        .insert(path.into_os_string(), LogFile::new(file));
+                }
+                _ => log::error!("Error opening {:?}; skipped.", path),
+            }
         }
+        Ok(())
+    }
+
+    // TODO probably just have to return path refs here
+    fn get_read_file_paths(&self) -> crate::Result<Vec<PathBuf>> {
+        let mut paths = std::fs::read_dir(&self.config.log_dir)
+            .unwrap()
+            .map(|res| res.map(|e| e.path()))
+            .collect::<Result<Vec<_>, std::io::Error>>()?;
+        paths.sort();
+        Ok(paths)
     }
 
     fn make_new_writer(&mut self) -> crate::Result<LogWriter<File>> {
@@ -55,16 +83,6 @@ impl<'a> FileLogManager<'a> {
         self.current_path = Some(path.clone());
         let file = File::options().create_new(true).append(true).open(path)?;
         Ok(LogWriter::new(file))
-    }
-
-    pub fn get_closed_files(&self) -> Vec<PathBuf> {
-        let mut files = std::fs::read_dir(&self.config.log_dir)
-            .unwrap()
-            .map(|res| res.map(|e| e.path()))
-            .collect::<Result<Vec<_>, std::io::Error>>()
-            .unwrap();
-        files.sort();
-        files
     }
 
     fn generate_fname(&self) -> crate::Result<String> {
@@ -103,15 +121,26 @@ impl<'cfg> LogManagerT for FileLogManager<'cfg> {
             .to_os_string()
     }
 
-    fn initialize_keydir(&self) -> KeyDir {
+    fn initialize_keydir(&mut self) -> KeyDir {
         let mut keydir = KeyDir::default();
-        for file_id in self.get_closed_files() {
-            info!("{:?}", file_id);
-            let reader = LogReader::new(file_id);
-            for item in reader.items() {
-                // TODO shouldn't be unwrapping here!
-                let (key, item) = item.unwrap();
-                keydir.set(key, item);
+        for (file_id, read_file) in self.read_files.iter_mut() {
+            for item in read_file.items() {
+                match item {
+                    Ok((entry, val_pos)) => {
+                        keydir.set(
+                            entry.key.clone(),
+                            Item {
+                                file_id: file_id.to_os_string(),
+                                val_sz: entry.val_sz() as usize,
+                                val_pos,
+                                ts: entry.ts,
+                            },
+                        );
+                    }
+                    _ => {
+                        error!("Problem encountered parsing log file {:?}", file_id);
+                    }
+                }
             }
         }
         keydir
@@ -119,22 +148,15 @@ impl<'cfg> LogManagerT for FileLogManager<'cfg> {
 
     fn position(&mut self) -> crate::Result<u64> {
         if let Some(ref mut writer) = self.writer {
-            Ok(writer.stream_position()?)
+            writer.stream_position()
         } else {
             // TODO should be an error
             Ok(0)
         }
     }
 
-    fn get(&self, item: &Item) -> crate::Result<String> {
-        let path = self
-            .config
-            .log_dir
-            .join(PathBuf::from(item.file_id.clone()));
-        let mut file = File::open(path)?;
-        file.seek(SeekFrom::Start(item.val_pos))?;
-        let mut buf = vec![0u8; item.val_sz];
-        file.read_exact(&mut buf)?;
-        Ok(from_utf8(&buf[..])?.to_string())
+    fn get(&mut self, item: &Item) -> crate::Result<String> {
+        let file = self.read_files.get_mut(&item.file_id).unwrap();
+        file.read(item.val_pos, item.val_sz)
     }
 }
