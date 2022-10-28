@@ -38,32 +38,25 @@ impl LogEntry {
     }
 
     pub fn serialize(&self) -> String {
-        let s = format!(
+        // TODO this is still not so good, don't need to allocate 2x
+        format!(
             "{:016x}{:016x}{:016x}{}{}",
             self.ts,
             self.key_sz(),
             self.val_sz(),
             self.key,
             self.val,
-        );
-        let crc = CRC.checksum(s.as_bytes());
-        format!("{:08x}{}", crc, s)
+        )
     }
 
-    pub fn deserialize(s: &str) -> Result<Self> {
-        let crc = u32::from_str_radix(&s[..8], 16)?;
-        if crc != CRC.checksum(&s[8..].as_bytes()) {
-            // TODO should be a special CRC error
-            return Err("CRC mismatch".into());
-        }
+    pub fn crc(&self) -> u32 {
+        CRC.checksum(self.serialize().as_bytes())
+    }
 
-        let ts = u64::from_str_radix(&s[8..24], 16)?;
-        let key_sz = u64::from_str_radix(&s[24..40], 16)?;
-        let val_sz = u64::from_str_radix(&s[40..56], 16)?;
-        let key_end = 56 + key_sz as usize;
-        let key = s[56..key_end].to_string();
-        let val = s[key_end..key_end + val_sz as usize].to_string();
-        Ok(Self { key, val, ts })
+    pub fn serialize_with_crc(&self) -> String {
+        let s = self.serialize();
+        let crc = CRC.checksum(s.as_bytes());
+        format!("{:08x}{}", crc, s)
     }
 
     pub fn serialize_hint(&self, position: u64) -> String {

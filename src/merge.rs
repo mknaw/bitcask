@@ -14,21 +14,10 @@ pub async fn merge<'a>(config: &'a Config<'a>) -> Result<()> {
         .map(|res| res.unwrap())
         .collect();
 
-    let mut data = HashMap::new();
+    let data = HashMap::<String, LogEntry>::new();
     paths.sort_by_key(|dir| dir.path());
-    for path in &paths {
-        let file = File::open(path.path())?;
-        for line in BufReader::new(file).lines() {
-            let entry = LogEntry::deserialize(&line?);
-            match entry {
-                Ok(entry) => {
-                    data.insert(entry.key.clone(), entry);
-                }
-                Err(e) => {
-                    info!("{}", e);
-                }
-            }
-        }
+    for _ in &paths {
+        todo!();
     }
 
     // TODO has to be a nicer API to just get the file name sans extension
@@ -45,7 +34,7 @@ pub async fn merge<'a>(config: &'a Config<'a>) -> Result<()> {
         .open(format!("{}.hint", last_ts))?;
 
     for entry in data.values() {
-        merge_file.write_all(entry.serialize().as_bytes())?;
+        merge_file.write_all(entry.serialize_with_crc().as_bytes())?;
         let pos = merge_file.stream_position()? - entry.val_sz() as u64;
         merge_file.write_all(b"\n")?; // TODO do we really need this?
         hint_file.write_all(entry.serialize_hint(pos).as_bytes())?;

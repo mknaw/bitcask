@@ -5,8 +5,11 @@ use std::path::PathBuf;
 use std::str::from_utf8;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use log::info;
+
 use crate::config::Config;
 use crate::keydir::{Item, KeyDir};
+use crate::log_reader::LogReader;
 use crate::log_writer::{LogEntry, LogWriter, LogWriterT};
 
 pub trait LogManagerT {
@@ -15,7 +18,7 @@ pub trait LogManagerT {
     fn initialize_keydir(&self) -> KeyDir;
     fn get_file_id(&self) -> OsString;
     fn set(&mut self, entry: LogEntry) -> crate::Result<Item> {
-        let line = entry.serialize();
+        let line = entry.serialize_with_crc();
         self.write(line)?;
         Ok(Item {
             file_id: self.get_file_id(),
@@ -101,9 +104,17 @@ impl<'cfg> LogManagerT for FileLogManager<'cfg> {
     }
 
     fn initialize_keydir(&self) -> KeyDir {
-        let files = self.get_closed_files();
-        // TODO the contents of `scan` should probably be moved here.
-        KeyDir::scan(files)
+        let mut keydir = KeyDir::default();
+        for file_id in self.get_closed_files() {
+            info!("{:?}", file_id);
+            let reader = LogReader::new(file_id);
+            for item in reader.items() {
+                // TODO shouldn't be unwrapping here!
+                let (key, item) = item.unwrap();
+                keydir.set(key, item);
+            }
+        }
+        keydir
     }
 
     fn position(&mut self) -> crate::Result<u64> {
