@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::ffi::OsString;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::str::from_utf8;
@@ -7,16 +8,9 @@ use store::keydir::{Item, KeyDir};
 use store::log::manager::LogManagerT;
 use store::Result;
 
+#[derive(Default)]
 struct TestLogManager {
     log: Cursor<Vec<u8>>,
-}
-
-impl Default for TestLogManager {
-    fn default() -> Self {
-        Self {
-            log: Cursor::new(Vec::new()),
-        }
-    }
 }
 
 impl LogManagerT for TestLogManager {
@@ -26,9 +20,12 @@ impl LogManagerT for TestLogManager {
         OsString::from("test")
     }
 
-    fn write(&mut self, line: String) -> Result<()> {
+    fn write(&mut self, line: String) -> Result<u64> {
         self.log.write(line.as_bytes())?;
-        Ok(())
+        self.log.stream_position().map_err(|err| {
+            let dyn_err: Box<dyn Error> = Box::new(err);
+            dyn_err
+        })
     }
 
     fn initialize_keydir(&mut self) -> KeyDir {
@@ -42,10 +39,6 @@ impl LogManagerT for TestLogManager {
         let mut buf = vec![0u8; item.val_sz];
         log.read_exact(&mut buf)?;
         Ok(from_utf8(&buf[..])?.to_string())
-    }
-
-    fn position(&mut self) -> Result<u64> {
-        Ok(self.log.stream_position()?)
     }
 }
 

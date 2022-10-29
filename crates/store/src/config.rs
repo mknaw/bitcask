@@ -16,7 +16,7 @@ impl<'a> Default for Config<'a> {
             log_dir: Path::new("/tmp/bitcask/"),
             host: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             port: 6969,
-            max_log_file_size: 1024,
+            max_log_file_size: 128,
         }
     }
 }

@@ -5,12 +5,12 @@ use std::io::{Seek, Write};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use log::error;
+use log::{debug, error};
 
 use crate::config::Config;
 use crate::keydir::{Item, KeyDir};
 use crate::log::read_file::LogFile;
-use crate::log::write_file::{LogWriter, LogWriterT};
+use crate::log::write_file::{WriteFile, WriteTarget};
 use crate::log::LogEntry;
 
 pub trait LogManagerT {
@@ -20,23 +20,22 @@ pub trait LogManagerT {
     fn get_file_id(&self) -> OsString;
     fn set(&mut self, entry: LogEntry) -> crate::Result<Item> {
         let line = entry.serialize_with_crc();
-        self.write(line)?;
+        let position = self.write(line)?;
         Ok(Item {
             file_id: self.get_file_id(),
             val_sz: entry.val.len(),
-            val_pos: self.position()? - entry.val_sz() as u64,
+            val_pos: position - entry.val_sz() as u64,
             ts: entry.ts,
         })
     }
-    fn write(&mut self, line: String) -> crate::Result<()>;
+    fn write(&mut self, line: String) -> crate::Result<u64>;
     fn get(&mut self, item: &Item) -> crate::Result<String>;
-    fn position(&mut self) -> crate::Result<u64>;
 }
 
 pub struct FileLogManager<'a> {
     config: &'a Config<'a>,
     pub current_path: Option<PathBuf>,
-    writer: Option<LogWriter<File>>,
+    writer: Option<WriteFile<File>>,
     read_files: BTreeMap<OsString, LogFile>,
 }
 
@@ -56,18 +55,21 @@ impl<'a> FileLogManager<'a> {
 
     fn initialize_read_files(&mut self) -> crate::Result<()> {
         for path in self.get_read_file_paths()? {
-            match File::options().read(true).write(false).open(&path) {
-                Ok(file) => {
-                    self.read_files
-                        .insert(path.into_os_string(), LogFile::new(file));
-                }
+            match self.add_read_file(&path) {
+                Ok(_) => (),
                 _ => log::error!("Error opening {:?}; skipped.", path),
             }
         }
         Ok(())
     }
 
-    // TODO probably just have to return path refs here
+    fn add_read_file(&mut self, path: &PathBuf) -> crate::Result<()> {
+        let file = File::options().read(true).write(false).open(path)?;
+        self.read_files
+            .insert(path.clone().into_os_string(), LogFile::new(file));
+        Ok(())
+    }
+
     fn get_read_file_paths(&self) -> crate::Result<Vec<PathBuf>> {
         let mut paths = std::fs::read_dir(&self.config.log_dir)
             .unwrap()
@@ -77,12 +79,16 @@ impl<'a> FileLogManager<'a> {
         Ok(paths)
     }
 
-    fn make_new_writer(&mut self) -> crate::Result<LogWriter<File>> {
+    fn make_new_writer(&mut self) -> crate::Result<WriteFile<File>> {
+        if let Some(path) = self.current_path.clone() {
+            self.add_read_file(&path)?;
+        }
         let fname = self.generate_fname()?;
         let path = self.config.log_dir.join(fname);
+        debug!("Opening new write file {:?}", path);
         self.current_path = Some(path.clone());
         let file = File::options().create_new(true).append(true).open(path)?;
-        Ok(LogWriter::new(file))
+        Ok(WriteFile::new(file))
     }
 
     fn generate_fname(&self) -> crate::Result<String> {
@@ -95,7 +101,8 @@ impl<'a> FileLogManager<'a> {
         if self.writer.is_none() {
             Ok(true)
         } else {
-            Ok(line.len() as u64 + self.position()? > self.config.max_log_file_size)
+            let writer = self.writer.as_mut().unwrap();
+            Ok(!writer.will_fit(&line, self.config.max_log_file_size)?)
         }
     }
 }
@@ -103,14 +110,13 @@ impl<'a> FileLogManager<'a> {
 impl<'cfg> LogManagerT for FileLogManager<'cfg> {
     type Out = File;
 
-    fn write(&mut self, line: String) -> crate::Result<()> {
+    fn write(&mut self, line: String) -> crate::Result<u64> {
         if self.need_new_writer(&line)? {
             self.writer = Some(self.make_new_writer()?);
         }
         let writer = self.writer.as_mut().unwrap();
         // TODO should be able to write it from a reference?
-        writer.write(line.to_string())?;
-        Ok(())
+        writer.write(line.to_string())
     }
 
     fn get_file_id(&self) -> OsString {
@@ -144,15 +150,6 @@ impl<'cfg> LogManagerT for FileLogManager<'cfg> {
             }
         }
         keydir
-    }
-
-    fn position(&mut self) -> crate::Result<u64> {
-        if let Some(ref mut writer) = self.writer {
-            writer.stream_position()
-        } else {
-            // TODO should be an error
-            Ok(0)
-        }
     }
 
     fn get(&mut self, item: &Item) -> crate::Result<String> {
