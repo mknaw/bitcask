@@ -4,9 +4,10 @@ use crc::{Crc, CRC_32_ISCSI};
 
 use crate::Result;
 
+pub mod handle;
 pub mod manager;
-pub mod read_file;
-pub mod write_file;
+pub mod read;
+pub mod write;
 
 // TODO investigate if this is the correct algorithm
 const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
@@ -15,12 +16,12 @@ const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
 pub struct LogEntry {
     pub key: String,
     pub val: String,
-    pub ts: u64,
+    pub ts: u128,
 }
 
 impl LogEntry {
     pub fn from_set(key: &str, val: &str) -> Result<Self> {
-        let ts: u64 = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let ts: u128 = SystemTime::now().duration_since(UNIX_EPOCH)?.as_micros();
         Ok(Self {
             key: key.to_string(),
             val: val.to_string(),
@@ -39,7 +40,7 @@ impl LogEntry {
     pub fn serialize(&self) -> String {
         // TODO this is still not so good, don't need to allocate 2x
         format!(
-            "{:016x}{:016x}{:016x}{}{}",
+            "{:032x}{:016x}{:016x}{}{}",
             self.ts,
             self.key_sz(),
             self.val_sz(),

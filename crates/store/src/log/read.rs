@@ -1,50 +1,25 @@
-use std::{
-    fs::File,
-    io::{BufReader, Read, Seek, SeekFrom},
-    str::from_utf8,
-};
+use std::io::{BufReader, Read};
 
 use log::{debug, info};
 
+use crate::log::handle::Handle;
 use crate::{log::LogEntry, Result};
 
-pub struct LogFile {
-    file: File,
-}
-
-impl LogFile {
-    pub fn new(file: File) -> Self {
-        Self { file }
-    }
-
-    pub fn read(&mut self, from: u64, len: usize) -> Result<String> {
-        self.file.seek(SeekFrom::Start(from))?;
-        let mut buf = vec![0u8; len];
-        self.file.read_exact(&mut buf)?;
-        Ok(from_utf8(&buf[..])?.to_string())
-    }
-
-    pub fn items(&mut self) -> ItemIterator {
-        let reader = BufReader::new(&self.file);
-        ItemIterator::new(reader)
-    }
-}
-
-pub struct ItemIterator<'a> {
-    reader: BufReader<&'a File>,
+pub struct Reader<'a> {
+    reader: BufReader<&'a mut Handle>,
     position: usize,
 }
 
-impl<'a> ItemIterator<'a> {
-    pub fn new(reader: BufReader<&'a File>) -> Self {
+impl<'a> Reader<'a> {
+    pub fn new(handle: &'a mut Handle) -> Self {
         Self {
-            reader,
+            reader: BufReader::new(handle),
             position: 0,
         }
     }
 }
 
-impl<'a> Iterator for ItemIterator<'a> {
+impl<'a> Iterator for Reader<'a> {
     type Item = Result<(LogEntry, u64)>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -53,10 +28,11 @@ impl<'a> Iterator for ItemIterator<'a> {
         self.reader.read_exact(&mut buf).ok()?;
         let crc = u32::from_str_radix(std::str::from_utf8(&buf).ok()?, 16).ok()?;
 
-        let mut buf = [0u8; 16];
+        let mut buf = [0u8; 32];
         self.reader.read_exact(&mut buf).ok()?;
-        let ts = u64::from_str_radix(std::str::from_utf8(&buf).ok()?, 16).ok()?;
+        let ts = u128::from_str_radix(std::str::from_utf8(&buf).ok()?, 16).ok()?;
 
+        let mut buf = [0u8; 16];
         self.reader.read_exact(&mut buf).ok()?;
         let key_sz = usize::from_str_radix(std::str::from_utf8(&buf).ok()?, 16).ok()?;
 

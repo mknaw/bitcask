@@ -1,63 +1,57 @@
-use std::error::Error;
-use std::ffi::OsString;
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use std::str::from_utf8;
+use simple_logger::SimpleLogger;
+use tempfile::tempdir;
 
 use store::bitcask::BitCask;
-use store::keydir::{Item, KeyDir};
-use store::log::manager::LogManagerT;
-use store::Result;
+use store::random_string;
+use store::{Config, FileLogManager};
 
-#[derive(Default)]
-struct TestLogManager {
-    log: Cursor<Vec<u8>>,
+/// Wrapper around a test fn that sets up a bitcask instance good for testing.
+fn run_test(test: impl FnOnce(&mut BitCask<FileLogManager>)) {
+    SimpleLogger::new().init().ok();
+    let dir = tempdir().unwrap();
+    let cfg = Config {
+        log_dir: dir.path(),
+        max_log_file_size: 1000,
+    };
+    let manager = FileLogManager::new(&cfg).unwrap();
+    let mut bitcask = BitCask::new(manager);
+    test(&mut bitcask);
 }
 
-impl LogManagerT for TestLogManager {
-    type Out = Cursor<Vec<u8>>;
-
-    fn get_file_id(&self) -> OsString {
-        OsString::from("test")
-    }
-
-    fn write(&mut self, line: String) -> Result<u64> {
-        self.log.write(line.as_bytes())?;
-        self.log.stream_position().map_err(|err| {
-            let dyn_err: Box<dyn Error> = Box::new(err);
-            dyn_err
-        })
-    }
-
-    fn initialize_keydir(&mut self) -> KeyDir {
-        KeyDir::default()
-    }
-
-    fn get(&mut self, item: &Item) -> crate::Result<String> {
-        // TODO the clone here is hardly ideal!
-        let mut log = self.log.clone();
-        log.seek(SeekFrom::Start(item.val_pos))?;
-        let mut buf = vec![0u8; item.val_sz];
-        log.read_exact(&mut buf)?;
-        Ok(from_utf8(&buf[..])?.to_string())
-    }
-}
-
-fn init_test_bitcask() -> BitCask<TestLogManager> {
-    BitCask::new(TestLogManager::default())
-}
-
+/// Basic happy path test.
 #[test]
-fn test_happy_bitcask() {
-    let mut bitcask = init_test_bitcask();
-    let key1 = "foo";
-    let val1 = "bar";
-    let key2 = "baz";
-    let val2 = "quux\n\nand\n\nother\n\nstuff\n\ntoo";
-    bitcask.set(key1, val1).unwrap();
-    bitcask.set(key2, val2).unwrap();
-    assert_eq!(bitcask.get(key1).unwrap(), val1);
-    assert_eq!(bitcask.get(key1).unwrap(), val1);
-    bitcask.delete(key1).unwrap();
-    let error = bitcask.get(key1).err().unwrap();
-    assert!(error.is::<store::bitcask::KeyMiss>());
+fn test_happy_path() {
+    run_test(|bitcask| {
+        let key1 = "foo";
+        let val1 = "bar";
+        bitcask.set(key1, val1).unwrap();
+
+        let key2 = "baz";
+        let val2 = "quux\n\nand\n\nother\n\nstuff\n\ntoo";
+        bitcask.set(key2, val2).unwrap();
+
+        assert_eq!(bitcask.get(key1).unwrap(), val1);
+        assert_eq!(bitcask.get(key1).unwrap(), val1);
+
+        bitcask.delete(key1).unwrap();
+        let error = bitcask.get(key1).err().unwrap();
+        assert!(error.is::<store::bitcask::KeyMiss>());
+    });
 }
+
+/// Test merge functionality.
+#[test]
+fn test_merge() {
+    run_test(|bitcask| {
+        let key1 = "foo";
+        let mut val = String::new();
+        for _ in 0..50 {
+            val = random_string(25);
+            bitcask.set(key1, &val).unwrap();
+        }
+        bitcask.merge().unwrap();
+        assert_eq!(bitcask.get(key1).unwrap(), val);
+    });
+}
+
+// TODO test initialization - read existing log files

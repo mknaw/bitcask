@@ -1,11 +1,11 @@
 use std::{collections::HashMap, ffi::OsString};
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct Item {
     pub file_id: OsString,
     pub val_sz: usize,
     pub val_pos: u64,
-    pub ts: u64,
+    pub ts: u128,
 }
 
 #[derive(Default)]

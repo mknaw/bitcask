@@ -2,6 +2,8 @@ use std::fmt;
 use std::io::{BufRead, Cursor};
 use std::vec::IntoIter;
 
+use log::debug;
+
 // TODO try `nom`, just for shits?
 
 #[derive(Debug)]
@@ -24,6 +26,8 @@ pub enum Token {
     Get,
     Set,
     Delete,
+    // TODO temporary code, just for testing.
+    Merge,
     Simple(String),
 }
 
@@ -31,7 +35,7 @@ pub enum Command {
     Get(Get),
     Set(Set),
     Delete(Delete),
-    // TODO Delete
+    Merge,
 }
 
 #[derive(Debug, PartialEq)]
@@ -80,11 +84,13 @@ fn make_set(tokens: &mut IntoIter<Token>) -> crate::Result<Command> {
 
 pub fn parse(cur: &mut Cursor<&[u8]>) -> crate::Result<Command> {
     let mut tokens = parse_tokens(cur).into_iter();
+    debug!("tokens: {:?}", tokens);
 
     match tokens.next() {
         Some(Token::Get) => make_get(&mut tokens),
         Some(Token::Set) => make_set(&mut tokens),
         Some(Token::Delete) => make_delete(&mut tokens),
+        Some(Token::Merge) => Ok(Command::Merge),
         _ => Err(Box::new(ParseError {})),
     }
 }
@@ -96,6 +102,8 @@ fn parse_token(bytes: Vec<u8>) -> crate::Result<Token> {
         Ok(Token::Set)
     } else if bytes == b"delete".to_vec() {
         Ok(Token::Delete)
+    } else if bytes == b"merge".to_vec() {
+        Ok(Token::Merge)
     } else {
         let simple = String::from_utf8(bytes)?.trim().to_string();
         Ok(Token::Simple(simple))
@@ -104,6 +112,7 @@ fn parse_token(bytes: Vec<u8>) -> crate::Result<Token> {
 
 pub fn parse_tokens(cur: &mut Cursor<&[u8]>) -> Vec<Token> {
     cur.position();
+    // TODO this is still bad because it reads stuff like "merge\n"
     let cur_iter = cur.split(b' ');
     let mut tokens = vec![];
     for bytes in cur_iter.flatten() {

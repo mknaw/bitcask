@@ -8,6 +8,7 @@ use crate::Result;
 
 // TODO should this one be a &str?
 // TODO reexport under `store::errors::...`?
+// TODO should probably be in the KeyDir file.
 #[derive(Debug)]
 pub struct KeyMiss(String);
 
@@ -41,15 +42,15 @@ impl<LM: LogManagerT> BitCask<LM> {
         debug!("Set {} to {}", key, val);
         let entry = LogEntry::from_set(key, val)?;
         let key = entry.key.clone();
-        let item = self.log_manager.set(entry)?;
+        let item = self.log_manager.set(&entry)?;
         self.keydir.set(key, item);
         Ok(())
     }
 
-    // TODO should it be a `&str` here?
     pub fn get(&mut self, key: &str) -> Result<String> {
         debug!("Get {}", key);
         if let Some(item) = self.keydir.get(key) {
+            // TODO if we are having file problems, should we evict from the keydir?
             let value = self.log_manager.get(item)?;
             if !crate::is_tombstone(&value) {
                 return Ok(value);
@@ -61,5 +62,9 @@ impl<LM: LogManagerT> BitCask<LM> {
     pub fn delete(&mut self, key: &str) -> Result<()> {
         debug!("Delete {}", key);
         self.set(key, crate::TOMBSTONE)
+    }
+
+    pub fn merge(&mut self) -> Result<()> {
+        self.log_manager.merge(&mut self.keydir)
     }
 }
