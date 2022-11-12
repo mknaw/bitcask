@@ -26,8 +26,6 @@ pub enum Token {
     Get,
     Set,
     Delete,
-    // TODO temporary code, just for testing.
-    Merge,
     Simple(String),
 }
 
@@ -35,7 +33,6 @@ pub enum Command {
     Get(Get),
     Set(Set),
     Delete(Delete),
-    Merge,
 }
 
 #[derive(Debug, PartialEq)]
@@ -90,7 +87,6 @@ pub fn parse(cur: &mut Cursor<&[u8]>) -> crate::Result<Command> {
         Some(Token::Get) => make_get(&mut tokens),
         Some(Token::Set) => make_set(&mut tokens),
         Some(Token::Delete) => make_delete(&mut tokens),
-        Some(Token::Merge) => Ok(Command::Merge),
         _ => Err(Box::new(ParseError {})),
     }
 }
@@ -102,8 +98,6 @@ fn parse_token(bytes: Vec<u8>) -> crate::Result<Token> {
         Ok(Token::Set)
     } else if bytes == b"delete".to_vec() {
         Ok(Token::Delete)
-    } else if bytes == b"merge".to_vec() {
-        Ok(Token::Merge)
     } else {
         let simple = String::from_utf8(bytes)?.trim().to_string();
         Ok(Token::Simple(simple))

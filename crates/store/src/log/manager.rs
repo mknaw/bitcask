@@ -170,7 +170,7 @@ impl<'cfg> LogManagerT for FileLogManager<'cfg> {
         let handle = self
             .handles
             .get_mut(&item.file_id)
-            .ok_or(ManagerError(format!("File not found: {:?}", item.file_id)))?;
+            .ok_or_else(|| ManagerError(format!("File not found: {:?}", item.file_id)))?;
         handle.borrow_mut().read_item(item)
     }
 

@@ -29,7 +29,7 @@ impl Handle {
     pub fn new(id: OsString, path: PathBuf, write: bool) -> Result<Self> {
         let out = if write {
             if path.exists() {
-                Err(format!("File already exists: {:?}", path))?;
+                return Err(format!("File already exists: {:?}", path).into());
             }
             File::options()
                 .create_new(true)
@@ -38,7 +38,7 @@ impl Handle {
                 .open(&path)?
         } else {
             if !path.exists() {
-                Err(format!("File does not exist: {:?}", path))?
+                return Err(format!("File does not exist: {:?}", path).into());
             }
             File::options().read(true).open(&path)?
         };
