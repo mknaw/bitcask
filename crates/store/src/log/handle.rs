@@ -1,7 +1,6 @@
-use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::{Arc, RwLock};
 use std::{
     ffi::OsString,
     fs::File,
@@ -21,7 +20,7 @@ pub struct Handle {
     out: File,
 }
 
-pub type SharedHandle = Rc<RefCell<Handle>>;
+pub type SharedHandle = Arc<RwLock<Handle>>;
 
 // TODO would like something that "drops" / converts a write
 // handle to a read-only one when the writer is done with it.
@@ -47,7 +46,7 @@ impl Handle {
 
     pub fn new_shared(id: OsString, path: PathBuf, write: bool) -> Result<SharedHandle> {
         let handle = Self::new(id, path, write)?;
-        Ok(Rc::new(RefCell::new(handle)))
+        Ok(Arc::new(RwLock::new(handle)))
     }
 
     pub fn rewind(&mut self) -> Result<()> {
@@ -56,7 +55,7 @@ impl Handle {
     }
 
     pub fn read_item(&mut self, item: &Item) -> Result<String> {
-        debug!("Reading? {:?}", self.out);
+        debug!("Reading {:?} from {:?}", item, self.out);
         self.out.seek(SeekFrom::Start(item.val_pos))?;
         let mut buf = vec![0u8; item.val_sz];
         self.out.read_exact(&mut buf)?;

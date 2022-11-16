@@ -6,14 +6,16 @@ use store::random_string;
 use store::{Config, FileLogManager};
 
 /// Wrapper around a test fn that sets up a bitcask instance good for testing.
-fn run_test(test: impl FnOnce(&mut BitCask<FileLogManager>)) {
+fn run_test(cfg: Option<&Config>, test: impl FnOnce(&mut BitCask<FileLogManager>)) {
     SimpleLogger::new().init().ok();
     let dir = tempdir().unwrap();
-    let cfg = Config {
+    // TODO this whole thing is a bit clunky, oughta be a smoother way
+    let default_cfg = Config {
         log_dir: dir.path(),
         max_log_file_size: 1000,
     };
-    let manager = FileLogManager::new(&cfg).unwrap();
+    let cfg = cfg.unwrap_or(&default_cfg);
+    let manager = FileLogManager::new(cfg).unwrap();
     let mut bitcask = BitCask::new(manager);
     test(&mut bitcask);
 }
@@ -21,7 +23,7 @@ fn run_test(test: impl FnOnce(&mut BitCask<FileLogManager>)) {
 /// Basic happy path test.
 #[test]
 fn test_happy_path() {
-    run_test(|bitcask| {
+    run_test(None, |bitcask| {
         let key1 = "foo";
         let val1 = "bar";
         bitcask.set(key1, val1).unwrap();
@@ -42,7 +44,7 @@ fn test_happy_path() {
 /// Test merge functionality.
 #[test]
 fn test_merge() {
-    run_test(|bitcask| {
+    run_test(None, |bitcask| {
         let key1 = "foo";
         let mut val = String::new();
         for _ in 0..50 {
@@ -54,4 +56,22 @@ fn test_merge() {
     });
 }
 
-// TODO test initialization - read existing log files
+/// Tests whether preexisting log files read correctly on `bitcask` initialization.
+#[test]
+fn test_read_existing_on_init() {
+    let dir = tempdir().unwrap();
+    let cfg = Config {
+        log_dir: dir.path(),
+        max_log_file_size: 1000,
+    };
+    let key = "foo";
+    let val = "bar";
+    run_test(Some(&cfg), |bitcask| {
+        bitcask.set(key, val).unwrap();
+    });
+
+    // Open new `bitcask` in same directory.
+    run_test(Some(&cfg), |bitcask| {
+        assert_eq!(bitcask.get(key).unwrap(), val);
+    });
+}

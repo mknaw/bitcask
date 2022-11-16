@@ -54,7 +54,7 @@ impl<'a> Iterator for Reader<'a> {
             ts,
         };
 
-        self.position += 8 + 3 * 16 + key_sz + val_sz;
+        self.position += 8 + 32 + 2 * 16 + key_sz + val_sz;
 
         if entry.crc() != crc {
             info!("CRC mismatch for entry: {:?}", entry);

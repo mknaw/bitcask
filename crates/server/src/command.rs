@@ -21,7 +21,7 @@ impl ::std::error::Error for ParseError {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum Token {
     Get,
     Set,
@@ -29,22 +29,23 @@ pub enum Token {
     Simple(String),
 }
 
+#[derive(Debug)]
 pub enum Command {
     Get(Get),
     Set(Set),
     Delete(Delete),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Get(pub String);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Set {
     pub key: String,
     pub val: String,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Delete(pub String);
 
 fn make_get(tokens: &mut IntoIter<Token>) -> crate::Result<Command> {
@@ -138,8 +139,8 @@ mod tests {
         let buf: &[u8] = b"get foo";
         let mut cur = Cursor::new(buf);
         match parse(&mut cur) {
-            Ok(Command::Get(Get(c))) => assert!(c == "foo".to_string()),
-            _ => assert!(false),
+            Ok(Command::Get(Get(c))) => assert!(c == "foo"),
+            _ => panic!(),
         }
     }
 
@@ -159,10 +160,10 @@ mod tests {
         let mut cur = Cursor::new(buf);
         match parse(&mut cur) {
             Ok(Command::Set(Set { key, val })) => {
-                assert!(key == "foo".to_string());
-                assert!(val == "bar".to_string());
+                assert!(key == "foo");
+                assert!(val == "bar");
             }
-            _ => assert!(false),
+            _ => panic!(),
         }
     }
 
