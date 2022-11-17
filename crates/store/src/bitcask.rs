@@ -64,6 +64,11 @@ impl<LM: LogManagerT> BitCask<LM> {
         self.set(key, crate::TOMBSTONE)
     }
 
+    pub fn should_merge(&mut self) -> bool {
+        // TODO
+        true
+    }
+
     pub fn merge(&mut self) -> Result<()> {
         self.log_manager.merge(&mut self.keydir)
     }

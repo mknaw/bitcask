@@ -54,6 +54,15 @@ fn bitcask(mut rx: mpsc::Receiver<(Command, oneshot::Sender<Option<String>>)>) {
                     Command::Set(Set { key, val }) => {
                         bitcask.set(&key, &val).unwrap();
                         resp_tx.send(None).unwrap();
+                        if bitcask.should_merge() {
+                            // TODO should be able to do the log file writing of it in the background
+                            // without interfering with the main loop;
+                            // then only have to wait when files deleted and keydir swapped out.
+                            // bitcask.merge().unwrap();
+                            info!("merging...");
+                            std::thread::sleep(std::time::Duration::from_secs(10));
+                            info!("All finished");
+                        }
                     }
                     Command::Get(Get(get)) => match bitcask.get(&get) {
                         Ok(val) => resp_tx.send(Some(val)).unwrap(),
