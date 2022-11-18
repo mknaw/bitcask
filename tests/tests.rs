@@ -6,7 +6,7 @@ use store::random_string;
 use store::{Config, FileLogManager};
 
 /// Wrapper around a test fn that sets up a bitcask instance good for testing.
-fn run_test(cfg: Option<&Config>, test: impl FnOnce(&mut BitCask<FileLogManager>)) {
+fn run_test(cfg: Option<&Config>, test: impl FnOnce(&mut BitCask)) {
     SimpleLogger::new().init().ok();
     let dir = tempdir().unwrap();
     // TODO this whole thing is a bit clunky, oughta be a smoother way

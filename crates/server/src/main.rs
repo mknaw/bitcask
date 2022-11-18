@@ -43,6 +43,7 @@ async fn main() -> Result<()> {
 
 fn bitcask(mut rx: mpsc::Receiver<(Command, oneshot::Sender<Option<String>>)>) {
     tokio::spawn(async move {
+        // TODO should create `log_dir` if doesn't yet exist.
         let store_config = StoreConfig::default();
         let log_manager = FileLogManager::new(&store_config).unwrap();
         // TODO might have to move the receiver onto the `bitcask` itself.

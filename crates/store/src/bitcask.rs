@@ -2,7 +2,7 @@ use log::debug;
 use std::fmt;
 
 use crate::keydir::KeyDir;
-use crate::log::manager::LogManagerT;
+use crate::log::manager::FileLogManager;
 use crate::log::LogEntry;
 use crate::Result;
 
@@ -24,18 +24,27 @@ impl fmt::Display for KeyMiss {
     }
 }
 
-pub struct BitCask<LM: LogManagerT> {
-    log_manager: LM,
+pub struct BitCask<'a> {
+    log_manager: FileLogManager<'a>,
     keydir: KeyDir,
 }
 
-impl<LM: LogManagerT> BitCask<LM> {
-    pub fn new(mut log_manager: LM) -> Self {
-        let keydir = log_manager.initialize_keydir();
+impl<'a> BitCask<'a> {
+    pub fn new(mut log_manager: FileLogManager<'a>) -> Self {
+        let keydir = Self::initialize_keydir(&mut log_manager);
         Self {
             log_manager,
             keydir,
         }
+    }
+
+    pub fn initialize_keydir(log_manager: &mut FileLogManager) -> KeyDir {
+        log_manager
+            .read_all_items()
+            .fold(KeyDir::default(), |mut keydir, reader_item| {
+                keydir.set(reader_item.entry.key.clone(), reader_item.to_keydir_item());
+                keydir
+            })
     }
 
     pub fn set(&mut self, key: &str, val: &str) -> Result<()> {

@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt;
-use std::fs::File;
-use std::io::{Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -12,7 +10,7 @@ use log::{debug, error, info};
 use crate::config::Config;
 use crate::keydir::{Item, KeyDir};
 use crate::log::handle::{Handle, SharedHandle};
-use crate::log::read::Reader;
+use crate::log::read::{Reader, ReaderItem};
 use crate::log::write::{WriteResult, Writer};
 use crate::log::LogEntry;
 
@@ -30,27 +28,6 @@ impl fmt::Display for ManagerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ManagerError: {}", self.0)
     }
-}
-
-pub trait LogManagerT {
-    type Out: Write + Seek;
-
-    fn initialize_keydir(&mut self) -> KeyDir;
-    fn set(&mut self, entry: &LogEntry) -> crate::Result<Item> {
-        let (file_id, val_pos) = self.write(entry)?;
-        Ok(Item {
-            file_id,
-            val_sz: entry.val.len(),
-            val_pos,
-            ts: entry.ts,
-        })
-    }
-    fn write(&mut self, entry: &LogEntry) -> crate::Result<(OsString, u64)>;
-    fn get(&mut self, item: &Item) -> crate::Result<String>;
-
-    fn merge(&mut self, keydir: &mut KeyDir) -> crate::Result<()>;
-
-    fn add_read_file(&mut self, path: &Path) -> crate::Result<()>;
 }
 
 pub struct FileLogManager<'cfg> {
@@ -92,17 +69,50 @@ impl<'cfg> FileLogManager<'cfg> {
     }
 
     fn get_read_file_paths(&self) -> crate::Result<Vec<PathBuf>> {
-        let mut paths = std::fs::read_dir(self.config.log_dir)
-            .unwrap()
-            .map(|res| res.map(|e| e.path()))
-            .collect::<Result<Vec<_>, std::io::Error>>()?;
+        let mut paths = std::fs::read_dir(self.config.log_dir)?
+            .flatten()
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
         paths.sort();
         Ok(paths)
     }
-}
 
-impl<'cfg> LogManagerT for FileLogManager<'cfg> {
-    type Out = File;
+    fn add_read_file(&mut self, path: &Path) -> crate::Result<()> {
+        let id = path.file_name().unwrap();
+        self.handles.insert(
+            path.file_name().unwrap().to_os_string(),
+            Handle::new_shared(id.to_os_string(), path.to_path_buf(), false)?,
+        );
+        Ok(())
+    }
+
+    pub fn read_all_items(&self) -> impl Iterator<Item = ReaderItem> + '_ {
+        self.handles.values().flat_map(|handle| {
+            let handle = &mut handle.write().unwrap();
+            let reader = Reader::new(handle);
+            // TODO probably should log errors instead of just flattening!
+            reader.flatten().collect::<Vec<_>>()
+        })
+    }
+
+    pub fn get(&mut self, item: &Item) -> crate::Result<String> {
+        debug!("Getting item {:?}", item);
+        let handle = self
+            .handles
+            .get_mut(&item.file_id)
+            .ok_or_else(|| ManagerError(format!("File not found: {:?}", item.file_id)))?;
+        handle.write().unwrap().read_item(item)
+    }
+
+    pub fn set(&mut self, entry: &LogEntry) -> crate::Result<Item> {
+        let (file_id, val_pos) = self.write(entry)?;
+        Ok(Item {
+            file_id,
+            val_sz: entry.val.len(),
+            val_pos,
+            ts: entry.ts,
+        })
+    }
 
     fn write(&mut self, entry: &LogEntry) -> crate::Result<(OsString, u64)> {
         let line = entry.serialize_with_crc();
@@ -113,44 +123,7 @@ impl<'cfg> LogManagerT for FileLogManager<'cfg> {
         Ok((id, position - entry.val_sz()))
     }
 
-    // TODO maybe the `BitCask` should take care of this.
-    fn initialize_keydir(&mut self) -> KeyDir {
-        let mut keydir = KeyDir::default();
-        for (file_id, read_file) in self.handles.iter_mut() {
-            let handle = &mut read_file.write().unwrap();
-            let reader = Reader::new(handle);
-            for item in reader {
-                match item {
-                    Ok((entry, val_pos)) => {
-                        keydir.set(
-                            entry.key.clone(),
-                            Item {
-                                file_id: file_id.to_os_string(),
-                                val_sz: entry.val_sz() as usize,
-                                val_pos,
-                                ts: entry.ts,
-                            },
-                        );
-                    }
-                    _ => {
-                        error!("Problem encountered parsing log file {:?}", file_id);
-                    }
-                }
-            }
-        }
-        keydir
-    }
-
-    fn get(&mut self, item: &Item) -> crate::Result<String> {
-        debug!("Getting item {:?}", item);
-        let handle = self
-            .handles
-            .get_mut(&item.file_id)
-            .ok_or_else(|| ManagerError(format!("File not found: {:?}", item.file_id)))?;
-        handle.write().unwrap().read_item(item)
-    }
-
-    fn merge(&mut self, keydir: &mut KeyDir) -> crate::Result<()> {
+    pub fn merge(&mut self, keydir: &mut KeyDir) -> crate::Result<()> {
         // TODO this is all sorts of fucked up!
         let last = self
             .handles
@@ -178,7 +151,7 @@ impl<'cfg> LogManagerT for FileLogManager<'cfg> {
             // TODO should we just be able to iterate over items from the `handle`?
             let reader = Reader::new(handle);
             // TODO should at least log something about encountering parse errors along the way.
-            for (entry, _val_pos) in reader.flatten() {
+            for ReaderItem { entry, .. } in reader.flatten() {
                 info!("Merging {:?}", entry);
                 if let Some(item) = keydir.get(&entry.key) {
                     if item.ts == entry.ts {
@@ -216,15 +189,6 @@ impl<'cfg> LogManagerT for FileLogManager<'cfg> {
             self.handles.insert(id.clone(), handle);
         }
 
-        Ok(())
-    }
-
-    fn add_read_file(&mut self, path: &Path) -> crate::Result<()> {
-        let id = path.file_name().unwrap();
-        self.handles.insert(
-            path.file_name().unwrap().to_os_string(),
-            Handle::new_shared(id.to_os_string(), path.to_path_buf(), false)?,
-        );
         Ok(())
     }
 }

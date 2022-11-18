@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::io::{BufReader, Read};
 
 use log::{debug, info};
@@ -19,8 +20,25 @@ impl<'a> Reader<'a> {
     }
 }
 
+pub struct ReaderItem {
+    pub file_id: OsString,
+    pub entry: LogEntry,
+    pub val_pos: u64,
+}
+
+impl ReaderItem {
+    pub fn to_keydir_item(&self) -> crate::keydir::Item {
+        crate::keydir::Item {
+            file_id: self.file_id.to_os_string(),
+            val_sz: self.entry.val_sz() as usize,
+            val_pos: self.val_pos,
+            ts: self.entry.ts,
+        }
+    }
+}
+
 impl<'a> Iterator for Reader<'a> {
-    type Item = Result<(LogEntry, u64)>;
+    type Item = Result<ReaderItem>;
 
     fn next(&mut self) -> Option<Self::Item> {
         // TODO not very pretty
@@ -66,6 +84,10 @@ impl<'a> Iterator for Reader<'a> {
             crc, ts, key_sz, val_sz, key, val
         );
 
-        Some(Ok((entry, (self.position - val_sz) as u64)))
+        Some(Ok(ReaderItem {
+            file_id: self.reader.get_ref().id.clone(),
+            entry,
+            val_pos: (self.position - val_sz) as u64,
+        }))
     }
 }
