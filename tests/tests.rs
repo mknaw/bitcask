@@ -4,15 +4,15 @@ use tempfile::{tempdir, TempDir};
 use tokio::sync::oneshot;
 
 use store::bitcask::{BitCask, Command, Message};
+use store::config::StoreConfig;
 use store::random_string;
-use store::Config;
 
 /// Wrapper around a test fn that sets up a bitcask instance good for testing.
-fn run_test(cfg: Option<Arc<Config>>, test: impl FnOnce(&mut BitCask)) {
+fn run_test(cfg: Option<Arc<StoreConfig>>, test: impl FnOnce(&mut BitCask)) {
     SimpleLogger::new().init().ok();
     let dir = tempdir().unwrap();
     // TODO this whole thing is a bit clunky, oughta be a smoother way
-    let default_cfg = Config {
+    let default_cfg = StoreConfig {
         log_dir: dir.path().to_path_buf(),
         max_log_file_size: 1000,
     };
@@ -23,7 +23,7 @@ fn run_test(cfg: Option<Arc<Config>>, test: impl FnOnce(&mut BitCask)) {
 
 fn default_bitcask() -> (BitCask, TempDir) {
     let dir = tempdir().unwrap();
-    let cfg = Config {
+    let cfg = StoreConfig {
         log_dir: dir.path().to_path_buf(),
         max_log_file_size: 1000,
     };
@@ -103,7 +103,7 @@ async fn test_merge() {
 #[test]
 fn test_read_existing_on_init() {
     let dir = tempdir().unwrap();
-    let cfg = Config {
+    let cfg = StoreConfig {
         log_dir: dir.path().to_path_buf(),
         max_log_file_size: 1000,
     };

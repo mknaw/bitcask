@@ -1,5 +1,5 @@
+use crate::config::StoreConfig;
 use crate::log::write::WriteResult;
-use crate::Config;
 use std::sync::Arc;
 
 use log::info;
@@ -21,7 +21,7 @@ pub struct MergeResult {
 }
 
 impl MergeJob {
-    pub fn merge(&mut self, config: Arc<Config>) -> crate::Result<MergeResult> {
+    pub fn merge(&mut self, config: Arc<StoreConfig>) -> crate::Result<MergeResult> {
         // TODO move this to `HandleMap`.
         let last = self
             .handles

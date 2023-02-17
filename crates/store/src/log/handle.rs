@@ -1,5 +1,5 @@
+use crate::config::StoreConfig;
 use crate::log::read::{Reader, ReaderItem};
-use crate::Config;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::path::PathBuf;
@@ -78,7 +78,7 @@ pub struct HandleMap {
 }
 
 impl HandleMap {
-    pub fn new(config: &Arc<Config>) -> crate::Result<Self> {
+    pub fn new(config: &Arc<StoreConfig>) -> crate::Result<Self> {
         let mut paths = std::fs::read_dir(&config.log_dir)?
             .flatten()
             .map(|entry| entry.path())

@@ -1,6 +1,6 @@
+use crate::config::StoreConfig;
 use crate::log::LogEntry;
 use crate::merge::MergeJob;
-use crate::Config;
 use log::{debug, info};
 use std::fmt;
 use std::sync::{Arc, Mutex, RwLock};
@@ -53,7 +53,7 @@ type SharedHandleMap = Arc<Mutex<HandleMap>>;
 type SharedWriter = Arc<Mutex<Writer>>;
 
 pub struct BitCask {
-    config: Arc<Config>,
+    config: Arc<StoreConfig>,
     keydir: SharedKeyDir,
     handles: SharedHandleMap,
     writer: SharedWriter,
@@ -61,7 +61,7 @@ pub struct BitCask {
 }
 
 impl BitCask {
-    pub fn new(config: Arc<Config>) -> crate::Result<Self> {
+    pub fn new(config: Arc<StoreConfig>) -> crate::Result<Self> {
         // Create the log directory if it doesn't exist.
         if !config.log_dir.exists() {
             std::fs::create_dir_all(&config.log_dir)?;

@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use log::debug;
 
+use crate::config::StoreConfig;
 use crate::log::handle::{ReadHandle, WriteHandle};
-use crate::{Config, Result};
+use crate::Result;
 
 type NameGenerator = Arc<dyn Fn(i8) -> String + Send + Sync>;
 
@@ -38,14 +39,14 @@ pub struct Writer {
     // TODO still not sure we need the whole config here.
     // On the one hand nice to get max filesize + logdir when writing
     // But also want it to be abstract so logdir not always relevant.
-    config: Arc<Config>,
+    config: Arc<StoreConfig>,
     pub out: Option<WriteHandle>,
     file_counter: i8,
     make_name: NameGenerator,
 }
 
 impl Writer {
-    pub fn new(config: Arc<Config>, make_name: NameGenerator) -> Self {
+    pub fn new(config: Arc<StoreConfig>, make_name: NameGenerator) -> Self {
         Self {
             config,
             make_name,

@@ -9,24 +9,22 @@ use tokio::io::{AsyncReadExt, BufWriter};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 
-use store::{BitCask, Command, Config as StoreConfig, Message, Result};
+use store::{get_store_config, BitCask, Command, Message, Result};
 
 mod command;
 mod config;
 
-use config::Config as ServerConfig;
+use crate::config::get_server_config;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     SimpleLogger::new().init().unwrap();
-    // TODO settings from env
-    let server_config = ServerConfig::default();
+    let server_config = get_server_config()?;
     let socket_addr = server_config.socket_addr();
     info!("listening on {}", socket_addr);
     let listener = TcpListener::bind(socket_addr).await.unwrap();
 
-    // TODO settings from env
-    let store_config = Arc::new(StoreConfig::default());
+    let store_config = Arc::new(get_store_config()?);
     let bitcask = BitCask::new(store_config).unwrap();
     let bitcask_tx = BitCask::listen(bitcask);
 
