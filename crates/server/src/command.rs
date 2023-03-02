@@ -1,12 +1,14 @@
 use std::fmt;
-use std::io::{BufRead, Cursor};
-use std::vec::IntoIter;
 
+use nom::{
+    branch::alt,
+    bytes::streaming::{tag, take},
+    character::complete::u64 as nom_u64,
+    combinator::all_consuming,
+    sequence::preceded,
+    IResult,
+};
 use store::Command;
-
-use log::debug;
-
-// TODO try `nom`, just for shits?
 
 #[derive(Debug)]
 pub struct ParseError;
@@ -24,15 +26,6 @@ impl ::std::error::Error for ParseError {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub enum Token {
-    Get,
-    Set,
-    Delete,
-    Merge,
-    Simple(String),
-}
-
-#[derive(Debug, Eq, PartialEq)]
 pub struct Get(pub String);
 
 #[derive(Debug, Eq, PartialEq)]
@@ -44,135 +37,76 @@ pub struct Set {
 #[derive(Debug, Eq, PartialEq)]
 pub struct Delete(pub String);
 
-fn make_get(tokens: &mut IntoIter<Token>) -> crate::Result<Command> {
-    // Extract a `Command::Get` from `tokens`.
-    if let Some(Token::Simple(s)) = tokens.next() {
-        if tokens.next().is_none() {
-            return Ok(Command::Get(s));
-        }
-    }
-    Err(Box::new(ParseError {}))
+/// Parse a `Command::Get` from `input`.
+fn parse_get(input: &str) -> IResult<&str, Command> {
+    let (input, len) = preceded(tag("get\r\n"), nom_u64)(input)?;
+    let (input, key) = all_consuming(preceded(tag("\r\n"), take(len)))(input)?;
+    Ok((input, Command::Get(key.to_string())))
 }
 
-fn make_delete(tokens: &mut IntoIter<Token>) -> crate::Result<Command> {
-    // Extract a `Command::Delete` from `tokens`.
-    if let Some(Token::Simple(s)) = tokens.next() {
-        if tokens.next().is_none() {
-            return Ok(Command::Delete(s));
-        }
-    }
-    Err(Box::new(ParseError {}))
+/// Parse a `Command::Set` from `input`.
+fn parse_set(input: &str) -> IResult<&str, Command> {
+    let (input, len) = preceded(tag("set\r\n"), nom_u64)(input)?;
+    let (input, key) = preceded(tag("\r\n"), take(len))(input)?;
+    let (input, len) = preceded(tag("\r\n"), nom_u64)(input)?;
+    let (input, val) = all_consuming(preceded(tag("\r\n"), take(len)))(input)?;
+    Ok((input, Command::Set((key.to_string(), val.to_string()))))
 }
 
-fn make_set(tokens: &mut IntoIter<Token>) -> crate::Result<Command> {
-    if let Some(Token::Simple(key)) = tokens.next() {
-        if let Some(Token::Simple(val)) = tokens.next() {
-            if tokens.next().is_none() {
-                return Ok(Command::Set((key, val)));
-            }
-        }
-    }
-
-    Err(Box::new(ParseError {}))
+/// Parse a `Command::Delete` from `input`.
+fn parse_delete(input: &str) -> IResult<&str, Command> {
+    let (input, len) = preceded(tag("delete\r\n"), nom_u64)(input)?;
+    let (input, key) = all_consuming(preceded(tag("\r\n"), take(len)))(input)?;
+    Ok((input, Command::Delete(key.to_string())))
 }
 
-pub fn parse(cur: &mut Cursor<&[u8]>) -> crate::Result<Command> {
-    let mut tokens = parse_tokens(cur).into_iter();
-    debug!("tokens: {:?}", tokens);
-
-    match tokens.next() {
-        Some(Token::Get) => make_get(&mut tokens),
-        Some(Token::Set) => make_set(&mut tokens),
-        Some(Token::Delete) => make_delete(&mut tokens),
-        Some(Token::Merge) => Ok(Command::Merge),
-        _ => Err(Box::new(ParseError {})),
-    }
+/// Parse a `Command::Merge` from `input`.
+fn parse_merge(input: &str) -> IResult<&str, Command> {
+    let (input, _) = all_consuming(tag("merge"))(input)?;
+    Ok((input, Command::Merge))
 }
 
-fn parse_token(bytes: Vec<u8>) -> crate::Result<Token> {
-    if bytes == b"get".to_vec() {
-        Ok(Token::Get)
-    } else if bytes == b"set".to_vec() {
-        Ok(Token::Set)
-    } else if bytes == b"delete".to_vec() {
-        Ok(Token::Delete)
-    } else if bytes == b"merge".to_vec() {
-        Ok(Token::Merge)
-    } else {
-        let simple = String::from_utf8(bytes)?.trim().to_string();
-        Ok(Token::Simple(simple))
-    }
-}
-
-pub fn parse_tokens(cur: &mut Cursor<&[u8]>) -> Vec<Token> {
-    cur.position();
-    // TODO this is still bad because it reads stuff like "merge\n"
-    let cur_iter = cur.split(b' ');
-    let mut tokens = vec![];
-    for bytes in cur_iter.flatten() {
-        if let Ok(token) = parse_token(bytes) {
-            tokens.push(token);
-        }
-    }
-
-    tokens
+pub fn parse(input: &str) -> crate::Result<Command> {
+    let (_, parsed) = alt((parse_get, parse_set, parse_delete, parse_merge))(input).unwrap();
+    Ok(parsed)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{parse, Command};
-    use std::io::Cursor;
 
     #[test]
-    fn test_parse_error() {
-        let buf: &[u8] = b"foo bar";
-        let mut cur = Cursor::new(buf);
-        assert!(
-            parse(&mut cur).is_err(),
-            "should not have parsed successfully"
-        );
-    }
-
-    #[test]
-    fn test_simple_get_parse() {
-        let buf: &[u8] = b"get foo";
-        let mut cur = Cursor::new(buf);
-        match parse(&mut cur) {
+    fn test_parse_get() {
+        match parse("get\r\n3\r\nfoo") {
             Ok(Command::Get(c)) => assert!(c == "foo"),
             _ => panic!(),
         }
     }
 
     #[test]
-    fn test_get_parse_error() {
-        let buf: &[u8] = b"get foo bar";
-        let mut cur = Cursor::new(buf);
-        assert!(
-            parse(&mut cur).is_err(),
-            "should not have parsed successfully"
-        );
-    }
-
-    #[test]
-    fn test_simple_set_parse() {
-        let buf: &[u8] = b"set foo bar";
-        let mut cur = Cursor::new(buf);
-        match parse(&mut cur) {
+    fn test_parse_set() {
+        match parse("set\r\n3\r\nfoo\r\n7\r\nbar baz") {
             Ok(Command::Set((key, val))) => {
                 assert!(key == "foo");
-                assert!(val == "bar");
+                assert!(val == "bar baz");
             }
             _ => panic!(),
         }
     }
 
     #[test]
-    fn test_set_parse_error() {
-        let buf: &[u8] = b"set foo bar baz";
-        let mut cur = Cursor::new(buf);
-        assert!(
-            parse(&mut cur).is_err(),
-            "should not have parsed successfully"
-        );
+    fn test_parse_delete() {
+        match parse("delete\r\n3\r\nfoo") {
+            Ok(Command::Delete(c)) => assert!(c == "foo"),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_parse_merge() {
+        match parse("merge") {
+            Ok(Command::Merge) => (),
+            _ => panic!(),
+        }
     }
 }

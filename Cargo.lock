@@ -54,6 +54,7 @@ dependencies = [
  "bytes",
  "config",
  "log",
+ "nom",
  "serde",
  "simple_logger",
  "store",

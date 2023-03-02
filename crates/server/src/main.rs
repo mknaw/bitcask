@@ -1,4 +1,3 @@
-use std::io::Cursor;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 
@@ -52,6 +51,5 @@ async fn main() -> Result<()> {
 async fn parse_command<'cfg>(stream: &mut BufWriter<TcpStream>) -> Result<Command> {
     let mut buf = BytesMut::with_capacity(4 * 1024);
     stream.read_buf(&mut buf).await?;
-    let mut cur = Cursor::new(&buf[..]);
-    command::parse(&mut cur)
+    command::parse(std::str::from_utf8(&buf).unwrap())
 }
