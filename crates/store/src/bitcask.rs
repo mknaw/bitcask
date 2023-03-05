@@ -1,34 +1,41 @@
-use crate::config::StoreConfig;
-use crate::log::LogEntry;
-use crate::merge::MergeJob;
-use log::{debug, info};
 use std::fmt;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use log::{debug, info};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::config::StoreConfig;
 use crate::keydir::KeyDir;
 use crate::log::handle::HandleMap;
 use crate::log::write::Writer;
-use crate::merge::MergeResult;
+use crate::log::LogEntry;
+use crate::merge::{MergeJob, MergeResult};
 
 // TODO should this one be a &str?
 // TODO reexport under `store::errors::...`?
 // TODO should probably be in the KeyDir file.
 #[derive(Debug)]
-pub struct KeyMiss(String);
-
-impl std::error::Error for KeyMiss {
-    fn description(&self) -> &str {
-        "key miss"
-    }
-}
+pub struct KeyMiss;
 
 impl fmt::Display for KeyMiss {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "KeyMiss: {}", self.0)
+        write!(f, "Key miss")
     }
 }
+
+impl std::error::Error for KeyMiss {}
+
+#[derive(Debug)]
+pub struct MergeUnderway;
+
+impl fmt::Display for MergeUnderway {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Merge already underway!")
+    }
+}
+
+impl std::error::Error for MergeUnderway {}
 
 #[derive(Debug)]
 pub enum Command {
@@ -38,13 +45,7 @@ pub enum Command {
     Merge,
 }
 
-#[derive(Debug)]
-pub enum Message {
-    Command((Command, oneshot::Sender<Option<String>>)),
-    MergeEnd(Box<MergeResult>),
-}
-
-pub type BitCaskTx = mpsc::Sender<Message>;
+pub type BitCaskTx = mpsc::Sender<(Command, oneshot::Sender<Option<String>>)>;
 
 type SharedKeyDir = Arc<RwLock<KeyDir>>;
 
@@ -53,11 +54,11 @@ type SharedHandleMap = Arc<Mutex<HandleMap>>;
 type SharedWriter = Arc<Mutex<Writer>>;
 
 pub struct BitCask {
-    config: Arc<StoreConfig>,
+    pub config: Arc<StoreConfig>,
     keydir: SharedKeyDir,
     handles: SharedHandleMap,
     writer: SharedWriter,
-    is_merging: Arc<Mutex<bool>>, // TODO is a semaphore overkill here?
+    is_merging: Arc<Mutex<bool>>, // TODO maybe use a single-permit `Semaphore`
 }
 
 impl BitCask {
@@ -99,109 +100,56 @@ impl BitCask {
     }
 
     pub fn listen(bitcask: Self) -> BitCaskTx {
-        let (tx, mut rx) = mpsc::channel(32);
-        let ret_tx = tx.clone();
-        let keydir = bitcask.keydir.clone();
-        let handles = bitcask.handles.clone();
+        let (tx, mut rx) = mpsc::channel::<(Command, oneshot::Sender<Option<String>>)>(32);
         let bitcask = Arc::new(Mutex::new(bitcask));
 
+        let tx = tx.clone();
         tokio::spawn(async move {
-            while let Some(msg) = rx.recv().await {
-                debug!("received message: {:?}", msg);
-                match msg {
-                    Message::Command((cmd, resp_tx)) => match cmd {
-                        Command::Set((key, val)) => {
-                            let bitcask = bitcask.clone();
-                            tokio::spawn(async move {
-                                bitcask.lock().unwrap().set(&key, &val).unwrap();
-                                resp_tx.send(None).unwrap();
-                            });
-                        }
-                        Command::Get(key) => {
-                            let keydir = keydir.clone();
-                            let handles = handles.clone();
-                            tokio::spawn(async move {
-                                // TODO maybe there's a better way than making this distinction.
-                                // Maybe put the whole BitCask in an RwLock?
-                                let val = Self::get_concurrent(keydir, &key, handles).unwrap();
-                                debug!("Get {}", val);
-                                resp_tx.send(Some(val)).unwrap();
-                            });
-                        }
-                        Command::Delete(key) => {
-                            bitcask.lock().unwrap().delete(&key).unwrap();
+            while let Some((cmd, resp_tx)) = rx.recv().await {
+                debug!("received command: {:?}", cmd);
+                match cmd {
+                    Command::Set((key, val)) => {
+                        let bitcask = bitcask.clone();
+                        tokio::spawn(async move {
+                            bitcask.lock().unwrap().set(&key, &val).unwrap();
                             resp_tx.send(None).unwrap();
-                        }
-                        Command::Merge => {
+                        });
+                    }
+                    Command::Get(key) => {
+                        let bitcask = bitcask.clone();
+                        tokio::spawn(async move {
+                            let val = bitcask.lock().unwrap().get(&key).unwrap();
+                            resp_tx.send(Some(val)).unwrap();
+                        });
+                    }
+                    Command::Delete(key) => {
+                        bitcask.lock().unwrap().delete(&key).unwrap();
+                        resp_tx.send(None).unwrap();
+                    }
+                    Command::Merge => {
+                        match {
                             let bitcask = bitcask.lock().unwrap();
-                            let mut is_merging = bitcask.is_merging.lock().unwrap();
-                            if *is_merging {
-                                resp_tx
-                                    .send(Some("already have merge task underway!".to_string()))
-                                    .unwrap();
-                            } else {
-                                let keydir = keydir.read().unwrap().clone();
-                                let mut handles = handles.lock().unwrap().try_clone().unwrap();
-                                let writer = bitcask.writer.lock().unwrap();
-                                if let Some(current_write_file_id) = writer.current_file_id() {
-                                    handles.remove(current_write_file_id);
-                                }
-                                // TODO wonder if there should be something like a `get_closed_only`
-                                let mut merge_job = MergeJob { keydir, handles };
-                                let config = bitcask.config.clone();
-                                let tx = tx.clone();
+                            let merge_job = bitcask.get_merge_job();
+                            *bitcask.is_merging.lock().unwrap() = true;
+                            merge_job
+                        } {
+                            Ok(mut merge_job) => {
+                                // Do the actual work in a spawned task; don't want to keep the mutex!
+                                let bitcask = bitcask.clone();
                                 tokio::spawn(async move {
-                                    // TODO send failure as an actual `Result<...>` so MergeEnd
-                                    // branch can "clean up" (like set `is_merging` to false).
-                                    let result = merge_job.merge(config).unwrap();
-                                    tx.send(Message::MergeEnd(Box::new(result))).await.unwrap();
+                                    let result = merge_job.merge().unwrap();
+                                    resp_tx.send(Some("merge complete".to_string())).unwrap();
+                                    bitcask.lock().unwrap().finalize_merge(result);
                                 });
-                                resp_tx.send(None).unwrap();
-                                *is_merging = true;
                             }
-                        }
-                    },
-                    Message::MergeEnd(merge_result) => {
-                        info!("finalizing merge");
-                        // self.merging = false;
-                        let mut keydir = keydir.write().unwrap();
-                        for (key, item) in merge_result.keydir.data {
-                            keydir.set(key, item);
-                        }
-
-                        // TODO have to remove this unseemly bit.
-                        let bitcask = bitcask.lock().unwrap();
-                        let writer = bitcask.writer.lock().unwrap();
-                        let mut handles = handles.lock().unwrap();
-                        let current_write_file_id = writer.current_file_id();
-                        for handle in handles
-                            .inner
-                            .values()
-                            .filter(|h| Some(&h.id) != current_write_file_id)
-                        {
-                            info!("Removing {:?}", handle.path);
-                            std::fs::remove_file(&handle.path).unwrap();
-                        }
-                        // TODO this really isnt a sufficient condition!
-                        // We could have added files since the merge job was queued, so we need to get
-                        // from the merge job a list of files that were merged and only delete those.
-                        handles
-                            .inner
-                            .retain(|id, _| Some(id) == current_write_file_id);
-                        for (_, handle) in merge_result.handle_map.inner {
-                            handles.insert(handle);
-                        }
-                        let mut is_merging = bitcask.is_merging.lock().unwrap();
-                        // TODO can't wait til here to set `is_merging = false`
-                        // earlier unwrap error for example would screw it up.
-                        *is_merging = false;
-                        // TODO hint file
+                            Err(e) => resp_tx.send(Some(e.to_string())).unwrap(),
+                        };
                     }
                 };
             }
         });
 
-        ret_tx
+        tx
     }
 
     pub fn set(&self, key: &str, val: &str) -> crate::Result<()> {
@@ -217,29 +165,75 @@ impl BitCask {
         Ok(())
     }
 
-    pub fn delete(&self, key: &str) -> crate::Result<()> {
-        debug!("Delete {}", key);
-        self.set(key, crate::TOMBSTONE)
-    }
-
-    fn get_concurrent(
-        keydir: SharedKeyDir,
-        key: &str,
-        handles: SharedHandleMap,
-    ) -> crate::Result<String> {
-        if let Some(item) = keydir.read().unwrap().get(key) {
+    pub fn get(&self, key: &str) -> crate::Result<String> {
+        if let Some(item) = self.keydir.read().unwrap().get(key) {
             // TODO if we are having file problems, should we evict from the keydir?
-            let mut handles = handles.lock().unwrap();
+            let mut handles = self.handles.lock().unwrap();
             let handle = handles.get(&item.file_id)?;
             let value = handle.read_item(item)?;
             if !crate::is_tombstone(&value) {
                 return Ok(value);
             }
         }
-        Err(KeyMiss(key.to_string()).into())
+        Err(KeyMiss.into())
     }
 
-    pub fn get(&self, key: &str) -> crate::Result<String> {
-        Self::get_concurrent(self.keydir.clone(), key, self.handles.clone())
+    pub fn delete(&self, key: &str) -> crate::Result<()> {
+        debug!("Delete {}", key);
+        self.set(key, crate::TOMBSTONE)
+    }
+
+    fn get_merge_job(&self) -> Result<MergeJob, MergeUnderway> {
+        if *self.is_merging.lock().unwrap() {
+            return Err(MergeUnderway);
+        }
+        // TODO would like to not have to `clone`, if possible
+        let keydir = self.keydir.read().unwrap().clone();
+        let mut handles = self.handles.lock().unwrap().try_clone().unwrap();
+        let writer = self.writer.lock().unwrap();
+        if let Some(current_write_file_id) = writer.current_file_id() {
+            handles.remove(current_write_file_id);
+        }
+        Ok(MergeJob {
+            keydir,
+            // TODO should there be a `handles.get_closed_only`?
+            handles,
+            config: self.config.clone(),
+        })
+    }
+
+    fn finalize_merge(&mut self, merge_result: MergeResult) {
+        info!("finalizing merge");
+        let mut keydir = self.keydir.write().unwrap();
+        for (key, item) in merge_result.keydir.data {
+            keydir.set(key, item);
+        }
+
+        // TODO have to remove this unseemly bit.
+        let writer = self.writer.lock().unwrap();
+        let mut handles = self.handles.lock().unwrap();
+        let current_write_file_id = writer.current_file_id();
+        for handle in handles
+            .inner
+            .values()
+            .filter(|h| Some(&h.id) != current_write_file_id)
+        {
+            info!("Removing {:?}", handle.path);
+            std::fs::remove_file(&handle.path).unwrap();
+        }
+        // TODO this really isnt a sufficient condition!
+        // We could have added files since the merge job was queued, so we need to get
+        // from the merge job a list of files that were merged and only delete those.
+        handles
+            .inner
+            .retain(|id, _| Some(id) == current_write_file_id);
+        for (_, handle) in merge_result.handle_map.inner {
+            handles.insert(handle);
+        }
+        let mut is_merging = self.is_merging.lock().unwrap();
+        // TODO can't wait til here to set `is_merging = false`
+        // earlier unwrap error for example would screw it up.
+        *is_merging = false;
+        // TODO hint file
     }
 }

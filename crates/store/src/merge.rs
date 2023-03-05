@@ -12,6 +12,7 @@ use crate::log::write::Writer;
 pub struct MergeJob {
     pub keydir: KeyDir,
     pub handles: HandleMap,
+    pub config: Arc<StoreConfig>,
 }
 
 #[derive(Debug)]
@@ -21,8 +22,9 @@ pub struct MergeResult {
 }
 
 impl MergeJob {
-    pub fn merge(&mut self, config: Arc<StoreConfig>) -> crate::Result<MergeResult> {
+    pub fn merge(&mut self) -> crate::Result<MergeResult> {
         // TODO move this to `HandleMap`.
+        // TODO blows up when "merge" before any sets.. should fix
         let last = self
             .handles
             .inner
@@ -33,8 +35,10 @@ impl MergeJob {
             .to_str()
             .unwrap()
             .to_string();
-        let mut merge_writer =
-            Writer::new(config, Arc::new(move |k| format!("{}.merge.{}", last, k)));
+        let mut merge_writer = Writer::new(
+            self.config.clone(),
+            Arc::new(move |k| format!("{}.merge.{}", last, k)),
+        );
 
         let mut new_keydir = KeyDir::default();
         let mut handle_map: HandleMap = Default::default();

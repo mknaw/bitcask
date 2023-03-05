@@ -2,7 +2,7 @@ use ::config::{Config, ConfigError};
 use serde::Deserialize;
 use std::path::PathBuf;
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct StoreConfig {
     pub log_dir: PathBuf,
     pub max_log_file_size: u64,

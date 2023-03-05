@@ -8,7 +8,7 @@ use tokio::io::{AsyncReadExt, BufWriter};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 
-use store::{get_store_config, BitCask, Command, Message, Result};
+use store::{get_store_config, BitCask, Command, Result};
 
 mod command;
 mod config;
@@ -32,10 +32,7 @@ async fn main() -> Result<()> {
         let (server_tx, server_rx) = oneshot::channel();
         let mut stream = BufWriter::new(socket);
         if let Ok(command) = parse_command(&mut stream).await {
-            bitcask_tx
-                .send(Message::Command((command, server_tx)))
-                .await
-                .unwrap();
+            bitcask_tx.send((command, server_tx)).await.unwrap();
             tokio::spawn(async move {
                 let res = server_rx.await.unwrap();
                 if let Some(res) = res {
@@ -48,6 +45,7 @@ async fn main() -> Result<()> {
     }
 }
 
+/// Put data sent from connection through command parser.
 async fn parse_command<'cfg>(stream: &mut BufWriter<TcpStream>) -> Result<Command> {
     let mut buf = BytesMut::with_capacity(4 * 1024);
     stream.read_buf(&mut buf).await?;

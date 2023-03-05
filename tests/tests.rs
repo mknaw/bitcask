@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tempfile::{tempdir, TempDir};
 use tokio::sync::oneshot;
 
-use store::bitcask::{BitCask, Command, Message};
+use store::bitcask::{BitCask, Command};
 use store::config::StoreConfig;
 use store::random_string;
 
@@ -40,31 +40,25 @@ async fn test_happy_path() {
     let key1 = "foo".to_string();
     let val1 = "bar".to_string();
     let (server_tx, rx) = oneshot::channel();
-    tx.send(Message::Command((
-        Command::Set((key1.clone(), val1.clone())),
-        server_tx,
-    )))
-    .await
-    .unwrap();
+    tx.send((Command::Set((key1.clone(), val1.clone())), server_tx))
+        .await
+        .unwrap();
     rx.await.unwrap();
 
     let key2 = "baz".to_string();
     let val2 = "quux\n\nand\n\nother\n\nstuff\n\ntoo".to_string();
     let (server_tx, rx) = oneshot::channel();
-    tx.send(Message::Command((
-        Command::Set((key2.clone(), val2.clone())),
-        server_tx,
-    )))
-    .await
-    .unwrap();
+    tx.send((Command::Set((key2.clone(), val2.clone())), server_tx))
+        .await
+        .unwrap();
     rx.await.unwrap();
 
     let (server_tx, rx1) = oneshot::channel();
-    tx.send(Message::Command((Command::Get(key1.clone()), server_tx)))
+    tx.send((Command::Get(key1.clone()), server_tx))
         .await
         .unwrap();
     let (server_tx, rx2) = oneshot::channel();
-    tx.send(Message::Command((Command::Get(key2.clone()), server_tx)))
+    tx.send((Command::Get(key2.clone()), server_tx))
         .await
         .unwrap();
 
@@ -73,31 +67,51 @@ async fn test_happy_path() {
 }
 
 /// Test merge functionality.
-// TODO not actually a good test as it stands!
 #[tokio::test]
 async fn test_merge() {
     let (bitcask, tempdir) = default_bitcask();
+    let config = bitcask.config.clone();
     let tx = BitCask::listen(bitcask);
     let key1 = "foo".to_string();
+    let mut val = String::new();
     for _ in 0..50 {
-        let val = random_string(25);
+        val = random_string(25);
         let (server_tx, rx) = oneshot::channel();
-        tx.send(Message::Command((
-            Command::Set((key1.clone(), val.clone())),
-            server_tx,
-        )))
-        .await
-        .unwrap();
+        tx.send((Command::Set((key1.clone(), val.clone())), server_tx))
+            .await
+            .unwrap();
         rx.await.unwrap();
     }
     assert!(std::fs::read_dir(tempdir.path()).unwrap().count() > 2);
 
     let (server_tx, rx) = oneshot::channel();
-    tx.send(Message::Command((Command::Merge, server_tx)))
-        .await
-        .unwrap();
+    tx.send((Command::Merge, server_tx)).await.unwrap();
     rx.await.unwrap();
+    let (server_tx, rx) = oneshot::channel();
+    tx.send((Command::Get(key1), server_tx)).await.unwrap();
+    assert_eq!(rx.await.unwrap(), Some(val));
+    assert!(std::fs::read_dir(config.log_dir.clone()).unwrap().count() <= 2);
 }
+
+/// Ensure that a merge doesn't block a get.
+/// TODO would have to do some mocking to ensure merge takes non 0 time?
+// #[tokio::test]
+// async fn test_merge_nonblocking() {
+//     let (bitcask, _) = default_bitcask();
+//     let tx = BitCask::listen(bitcask);
+//     let (server_tx1, rx_merge) = oneshot::channel();
+//     tx.send((Command::Merge, server_tx1)).await.unwrap();
+//     let (server_tx2, rx_get) = oneshot::channel();
+//     tx.send((Command::Get("foo".to_string()), server_tx2))
+//         .await
+//         .unwrap();
+//
+//     let res = tokio::select! {
+//         _ = rx_get => Ok(()),
+//         _ = rx_merge => Err(()),
+//     };
+//     assert!(res.is_ok());
+// }
 
 /// Tests whether preexisting log files read correctly on `bitcask` initialization.
 #[test]

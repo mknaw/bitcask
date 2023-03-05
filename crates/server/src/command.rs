@@ -55,6 +55,7 @@ fn parse_set(input: &str) -> IResult<&str, Command> {
 
 /// Parse a `Command::Delete` from `input`.
 fn parse_delete(input: &str) -> IResult<&str, Command> {
+    // TODO should be tag, then any amount of whitespace
     let (input, len) = preceded(tag("delete\r\n"), nom_u64)(input)?;
     let (input, key) = all_consuming(preceded(tag("\r\n"), take(len)))(input)?;
     Ok((input, Command::Delete(key.to_string())))
@@ -62,7 +63,8 @@ fn parse_delete(input: &str) -> IResult<&str, Command> {
 
 /// Parse a `Command::Merge` from `input`.
 fn parse_merge(input: &str) -> IResult<&str, Command> {
-    let (input, _) = all_consuming(tag("merge"))(input)?;
+    // TODO should be tag, then any amount of whitespace
+    let (input, _) = all_consuming(tag("merge\n"))(input)?;
     Ok((input, Command::Merge))
 }
 
@@ -104,7 +106,7 @@ mod tests {
 
     #[test]
     fn test_parse_merge() {
-        match parse("merge") {
+        match parse("merge\n") {
             Ok(Command::Merge) => (),
             _ => panic!(),
         }
