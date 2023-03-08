@@ -12,7 +12,7 @@ impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             log_dir: "/tmp/bitcask/".into(),
-            max_log_file_size: 25_000_000,
+            max_log_file_size: 2_000_000_000,
         }
     }
 }

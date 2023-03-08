@@ -24,4 +24,9 @@ store = { version = "0.1.0", path = "crates/store" }
 tokio = { version = "1.21.1", features = ["full"] }
 
 [dev-dependencies]
+criterion = "0.3"
 tempfile = "3"
+
+[[bench]]
+name = "benches"
+harness = false

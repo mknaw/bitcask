@@ -109,6 +109,7 @@ impl BitCask {
                 debug!("received command: {:?}", cmd);
                 match cmd {
                     Command::Set((key, val)) => {
+                        debug!("Set {} to {}", key, val);
                         let bitcask = bitcask.clone();
                         tokio::spawn(async move {
                             bitcask.lock().unwrap().set(&key, &val).unwrap();
@@ -153,7 +154,6 @@ impl BitCask {
     }
 
     pub fn set(&self, key: &str, val: &str) -> crate::Result<()> {
-        debug!("Set {} to {}", key, val);
         let entry = LogEntry::from_set(key, val)?;
         let key = entry.key.clone();
         // TODO still have to add to `handles` somewhere!
