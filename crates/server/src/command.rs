@@ -2,7 +2,7 @@ use std::fmt;
 
 use nom::branch::alt;
 use nom::bytes::streaming::{tag, take};
-use nom::character::complete::u64 as nom_u64;
+use nom::character::complete::{line_ending, multispace0, u64 as nom_u64};
 use nom::combinator::all_consuming;
 use nom::sequence::preceded;
 use nom::IResult;
@@ -12,15 +12,11 @@ pub struct ParseError;
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ParseError occurred")
+        write!(f, "Parse error occurred")
     }
 }
 
-impl ::std::error::Error for ParseError {
-    fn description(&self) -> &str {
-        "no error"
-    }
-}
+impl ::std::error::Error for ParseError {}
 
 #[derive(Debug)]
 pub enum Command {
@@ -31,39 +27,51 @@ pub enum Command {
 }
 
 /// Parse a `Command::Get` from `input`.
-fn parse_get(input: &str) -> IResult<&str, Command> {
-    let (input, len) = preceded(tag("get\r\n"), nom_u64)(input)?;
-    let (input, key) = all_consuming(preceded(tag("\r\n"), take(len)))(input)?;
-    Ok((input, Command::Get(key.to_string())))
+fn parse_get(i: &str) -> IResult<&str, Command> {
+    let (i, _) = preceded(tag("get"), line_ending)(i)?;
+    let (i, len) = nom_u64(i)?;
+    let (i, key) = preceded(line_ending, take(len))(i)?;
+    Ok((i, Command::Get(key.to_string())))
 }
 
-/// Parse a `Command::Set` from `input`.
-fn parse_set(input: &str) -> IResult<&str, Command> {
-    let (input, len) = preceded(tag("set\r\n"), nom_u64)(input)?;
-    let (input, key) = preceded(tag("\r\n"), take(len))(input)?;
-    let (input, len) = preceded(tag("\r\n"), nom_u64)(input)?;
-    let (input, val) = all_consuming(preceded(tag("\r\n"), take(len)))(input)?;
-    Ok((input, Command::Set((key.to_string(), val.to_string()))))
+/// Parse a `Command::Set` from `i`.
+fn parse_set(i: &str) -> IResult<&str, Command> {
+    let (i, _) = preceded(tag("set"), line_ending)(i)?;
+    let (i, len) = nom_u64(i)?;
+    let (i, key) = preceded(line_ending, take(len))(i)?;
+    let (i, len) = preceded(line_ending, nom_u64)(i)?;
+    let (i, val) = preceded(line_ending, take(len))(i)?;
+    let (i, _) = all_consuming(multispace0)(i)?;
+    Ok((i, Command::Set((key.to_string(), val.to_string()))))
 }
 
-/// Parse a `Command::Delete` from `input`.
-fn parse_delete(input: &str) -> IResult<&str, Command> {
+/// Parse a `Command::Delete` from `i`.
+fn parse_delete(i: &str) -> IResult<&str, Command> {
     // TODO should be tag, then any amount of whitespace
-    let (input, len) = preceded(tag("delete\r\n"), nom_u64)(input)?;
-    let (input, key) = all_consuming(preceded(tag("\r\n"), take(len)))(input)?;
-    Ok((input, Command::Delete(key.to_string())))
+    let (i, _) = preceded(tag("delete"), line_ending)(i)?;
+    let (i, len) = nom_u64(i)?;
+    let (i, key) = preceded(line_ending, take(len))(i)?;
+    let (i, _) = all_consuming(multispace0)(i)?;
+    Ok((i, Command::Delete(key.to_string())))
 }
 
-/// Parse a `Command::Merge` from `input`.
-fn parse_merge(input: &str) -> IResult<&str, Command> {
+/// Parse a `Command::Merge` from `i`.
+fn parse_merge(i: &str) -> IResult<&str, Command> {
     // TODO should be tag, then any amount of whitespace
-    let (input, _) = all_consuming(tag("merge\n"))(input)?;
-    Ok((input, Command::Merge))
+    let (i, _) = tag("merge")(i)?;
+    let (i, _) = all_consuming(multispace0)(i)?;
+    Ok((i, Command::Merge))
 }
 
-pub fn parse(input: &str) -> crate::Result<Command> {
-    let (_, parsed) = alt((parse_get, parse_set, parse_delete, parse_merge))(input).unwrap();
-    Ok(parsed)
+fn _parse(i: &str) -> IResult<&str, Command> {
+    let (i, parsed) = alt((parse_get, parse_set, parse_delete, parse_merge))(i)?;
+    let (i, _) = all_consuming(multispace0)(i)?;
+    Ok((i, parsed))
+}
+
+pub fn parse(input: &str) -> Result<Command, ParseError> {
+    let (_, command) = _parse(input).map_err(|_| ParseError)?;
+    Ok(command)
 }
 
 #[cfg(test)]

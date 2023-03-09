@@ -8,7 +8,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::command::Command;
+use crate::command::{parse, Command};
 use crate::config::get_server_config;
 
 mod command;
@@ -32,16 +32,22 @@ async fn main() -> Result<()> {
         let (socket, _) = listener.accept().await.unwrap();
         let (server_tx, server_rx) = oneshot::channel();
         let mut stream = BufWriter::new(socket);
-        if let Ok(command) = parse_command(&mut stream).await {
-            bitcask_tx.send((command, server_tx)).await.unwrap();
-            tokio::spawn(async move {
-                let res = server_rx.await.unwrap();
-                if let Some(res) = res {
-                    debug!("sending response: {}", res);
-                    stream.write_all(res.as_bytes()).await.unwrap();
-                    stream.flush().await.unwrap();
-                }
-            });
+        match parse_command(&mut stream).await {
+            Ok(command) => {
+                bitcask_tx.send((command, server_tx)).await.unwrap();
+                tokio::spawn(async move {
+                    let res = server_rx.await.unwrap();
+                    if let Some(res) = res {
+                        debug!("sending response: {}", res);
+                        stream.write_all(res.as_bytes()).await.unwrap();
+                        stream.flush().await.unwrap();
+                    }
+                });
+            }
+            Err(e) => {
+                stream.write_all(e.to_string().as_bytes()).await.unwrap();
+                stream.flush().await.unwrap();
+            }
         }
     }
 }
@@ -50,7 +56,8 @@ async fn main() -> Result<()> {
 async fn parse_command<'cfg>(stream: &mut BufWriter<TcpStream>) -> Result<Command> {
     let mut buf = BytesMut::with_capacity(4 * 1024);
     stream.read_buf(&mut buf).await?;
-    command::parse(std::str::from_utf8(&buf).unwrap())
+    let input = std::str::from_utf8(&buf)?;
+    parse(input).map_err(|e| e.into())
 }
 
 fn bitcask_loop(bitcask: BitCask) -> BitCaskTx {
