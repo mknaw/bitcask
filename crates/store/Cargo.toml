@@ -10,3 +10,6 @@ log = "0.4.17"
 rand = "0.8"
 serde = "1.0.152"
 tokio = { version = "1.21.1", features = ["full"] }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use tempfile::{tempdir, TempDir};
-
 use store::config::StoreConfig;
 use store::BitCask;
+use tempfile::{tempdir, TempDir};
 
 const SIZES: [usize; 9] = [128, 256, 1024, 4096, 8192, 32768, 131072, 262144, 524288];
 

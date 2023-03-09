@@ -1,6 +1,7 @@
+use std::path::PathBuf;
+
 use ::config::{Config, ConfigError};
 use serde::Deserialize;
-use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 pub struct StoreConfig {

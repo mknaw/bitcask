@@ -1,8 +1,9 @@
-pub use crate::config::get_store_config;
-pub use bitcask::{BitCask, Command};
+pub use bitcask::BitCask;
 pub use merge::MergeResult;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
+
+pub use crate::config::get_store_config;
 
 pub mod bitcask;
 pub mod config;

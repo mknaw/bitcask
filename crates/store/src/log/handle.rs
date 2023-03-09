@@ -1,19 +1,17 @@
-use crate::config::StoreConfig;
-use crate::log::read::{Reader, ReaderItem};
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fmt::Debug;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use std::str::from_utf8;
 use std::sync::Arc;
-use std::{
-    ffi::OsString,
-    fs::File,
-    io::{Read, Seek, SeekFrom, Write},
-    str::from_utf8,
-};
 
 use log::debug;
 
+use crate::config::StoreConfig;
 use crate::keydir::Item;
+use crate::log::read::{Reader, ReaderItem};
 use crate::Result;
 
 #[derive(Debug)]

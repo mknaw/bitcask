@@ -1,6 +1,7 @@
+use std::net::{IpAddr, SocketAddr};
+
 use ::config::{Config, ConfigError};
 use serde::Deserialize;
-use std::net::{IpAddr, SocketAddr};
 
 /// Configuration specific to the bitcask server.
 #[derive(Deserialize)]

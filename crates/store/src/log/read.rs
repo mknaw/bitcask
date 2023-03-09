@@ -4,7 +4,8 @@ use std::io::{BufReader, Read};
 use log::{debug, info};
 
 use crate::log::handle::ReadHandle;
-use crate::{log::LogEntry, Result};
+use crate::log::LogEntry;
+use crate::Result;
 
 pub struct Reader<'a> {
     reader: BufReader<&'a mut ReadHandle>,

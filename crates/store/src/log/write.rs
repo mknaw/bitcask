@@ -1,5 +1,3 @@
-use crate::keydir::Item;
-use crate::log::LogEntry;
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{Seek, Write};
@@ -8,7 +6,9 @@ use std::sync::Arc;
 use log::debug;
 
 use crate::config::StoreConfig;
+use crate::keydir::Item;
 use crate::log::handle::{ReadHandle, WriteHandle};
+use crate::log::LogEntry;
 use crate::Result;
 
 type NameGenerator = Arc<dyn Fn(i8) -> String + Send + Sync>;

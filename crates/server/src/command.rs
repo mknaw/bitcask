@@ -1,14 +1,11 @@
 use std::fmt;
 
-use nom::{
-    branch::alt,
-    bytes::streaming::{tag, take},
-    character::complete::u64 as nom_u64,
-    combinator::all_consuming,
-    sequence::preceded,
-    IResult,
-};
-use store::Command;
+use nom::branch::alt;
+use nom::bytes::streaming::{tag, take};
+use nom::character::complete::u64 as nom_u64;
+use nom::combinator::all_consuming;
+use nom::sequence::preceded;
+use nom::IResult;
 
 #[derive(Debug)]
 pub struct ParseError;
@@ -25,17 +22,13 @@ impl ::std::error::Error for ParseError {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct Get(pub String);
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct Set {
-    pub key: String,
-    pub val: String,
+#[derive(Debug)]
+pub enum Command {
+    Set((String, String)),
+    Get(String),
+    Delete(String),
+    Merge,
 }
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct Delete(pub String);
 
 /// Parse a `Command::Get` from `input`.
 fn parse_get(input: &str) -> IResult<&str, Command> {

@@ -2,15 +2,14 @@ use std::fmt;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use log::{debug, info};
-use tokio::sync::{mpsc, oneshot};
+use log::info;
 
 use crate::config::StoreConfig;
 use crate::keydir::KeyDir;
 use crate::log::handle::HandleMap;
 use crate::log::write::Writer;
 use crate::log::LogEntry;
-use crate::merge::{MergeJob, MergeResult};
+use crate::merge::merge;
 
 // TODO should this one be a &str?
 // TODO reexport under `store::errors::...`?
@@ -37,17 +36,7 @@ impl fmt::Display for MergeUnderway {
 
 impl std::error::Error for MergeUnderway {}
 
-#[derive(Debug)]
-pub enum Command {
-    Set((String, String)),
-    Get(String),
-    Delete(String),
-    Merge,
-}
-
-pub type BitCaskTx = mpsc::Sender<(Command, oneshot::Sender<Option<String>>)>;
-
-type SharedKeyDir = Arc<RwLock<KeyDir>>;
+pub type SharedKeyDir = Arc<RwLock<KeyDir>>;
 
 type SharedHandleMap = Arc<Mutex<HandleMap>>;
 
@@ -58,7 +47,7 @@ pub struct BitCask {
     keydir: SharedKeyDir,
     handles: SharedHandleMap,
     writer: SharedWriter,
-    is_merging: Arc<Mutex<bool>>, // TODO maybe use a single-permit `Semaphore`
+    merge_mutex: Arc<Mutex<()>>, // TODO maybe use a single-permit `Semaphore`
 }
 
 impl BitCask {
@@ -86,7 +75,7 @@ impl BitCask {
             keydir: Arc::new(RwLock::new(keydir)),
             handles: Arc::new(Mutex::new(handles)),
             writer: Arc::new(Mutex::new(writer)),
-            is_merging: Arc::new(Mutex::new(false)),
+            merge_mutex: Arc::new(Mutex::new(())),
         })
     }
 
@@ -97,60 +86,6 @@ impl BitCask {
                 keydir.set(reader_item.entry.key.clone(), reader_item.to_keydir_item());
                 keydir
             })
-    }
-
-    pub fn listen(bitcask: Self) -> BitCaskTx {
-        let (tx, mut rx) = mpsc::channel::<(Command, oneshot::Sender<Option<String>>)>(32);
-        let bitcask = Arc::new(Mutex::new(bitcask));
-
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            while let Some((cmd, resp_tx)) = rx.recv().await {
-                debug!("received command: {:?}", cmd);
-                match cmd {
-                    Command::Set((key, val)) => {
-                        debug!("Set {} to {}", key, val);
-                        let bitcask = bitcask.clone();
-                        tokio::spawn(async move {
-                            bitcask.lock().unwrap().set(&key, &val).unwrap();
-                            resp_tx.send(None).unwrap();
-                        });
-                    }
-                    Command::Get(key) => {
-                        let bitcask = bitcask.clone();
-                        tokio::spawn(async move {
-                            let val = bitcask.lock().unwrap().get(&key).unwrap();
-                            resp_tx.send(Some(val)).unwrap();
-                        });
-                    }
-                    Command::Delete(key) => {
-                        bitcask.lock().unwrap().delete(&key).unwrap();
-                        resp_tx.send(None).unwrap();
-                    }
-                    Command::Merge => {
-                        match {
-                            let bitcask = bitcask.lock().unwrap();
-                            let merge_job = bitcask.get_merge_job();
-                            *bitcask.is_merging.lock().unwrap() = true;
-                            merge_job
-                        } {
-                            Ok(mut merge_job) => {
-                                // Do the actual work in a spawned task; don't want to keep the mutex!
-                                let bitcask = bitcask.clone();
-                                tokio::spawn(async move {
-                                    let result = merge_job.merge().unwrap();
-                                    resp_tx.send(Some("merge complete".to_string())).unwrap();
-                                    bitcask.lock().unwrap().finalize_merge(result);
-                                });
-                            }
-                            Err(e) => resp_tx.send(Some(e.to_string())).unwrap(),
-                        };
-                    }
-                };
-            }
-        });
-
-        tx
     }
 
     pub fn set(&self, key: &str, val: &str) -> crate::Result<()> {
@@ -179,33 +114,30 @@ impl BitCask {
     }
 
     pub fn delete(&self, key: &str) -> crate::Result<()> {
-        debug!("Delete {}", key);
         self.set(key, crate::TOMBSTONE)
     }
 
-    fn get_merge_job(&self) -> Result<MergeJob, MergeUnderway> {
-        if *self.is_merging.lock().unwrap() {
-            return Err(MergeUnderway);
-        }
-        // TODO would like to not have to `clone`, if possible
-        let keydir = self.keydir.read().unwrap().clone();
-        let mut handles = self.handles.lock().unwrap().try_clone().unwrap();
-        let writer = self.writer.lock().unwrap();
-        if let Some(current_write_file_id) = writer.current_file_id() {
-            handles.remove(current_write_file_id);
-        }
-        Ok(MergeJob {
-            keydir,
-            // TODO should there be a `handles.get_closed_only`?
-            handles,
-            config: self.config.clone(),
-        })
+    pub fn merge(&self) -> crate::Result<()> {
+        // Take a mutex to hold throughout this scope.
+        let _merge_mutex = self.merge_mutex.try_lock().map_err(|_| MergeUnderway)?;
+        let handles = {
+            let mut handles = self.handles.lock().unwrap().try_clone().unwrap();
+            let writer = self.writer.lock().unwrap();
+            if let Some(current_write_file_id) = writer.current_file_id() {
+                handles.remove(current_write_file_id);
+            };
+            handles
+        };
+        let (new_keydir, new_handles) =
+            merge(self.keydir.clone(), handles, self.config.clone()).unwrap();
+        self.finalize_merge(new_keydir, new_handles);
+
+        Ok(())
     }
 
-    fn finalize_merge(&mut self, merge_result: MergeResult) {
-        info!("finalizing merge");
+    pub fn finalize_merge(&self, new_keydir: KeyDir, new_handles: HandleMap) {
         let mut keydir = self.keydir.write().unwrap();
-        for (key, item) in merge_result.keydir.data {
+        for (key, item) in new_keydir.data {
             keydir.set(key, item);
         }
 
@@ -227,13 +159,99 @@ impl BitCask {
         handles
             .inner
             .retain(|id, _| Some(id) == current_write_file_id);
-        for (_, handle) in merge_result.handle_map.inner {
+        for (_, handle) in new_handles.inner {
             handles.insert(handle);
         }
-        let mut is_merging = self.is_merging.lock().unwrap();
-        // TODO can't wait til here to set `is_merging = false`
         // earlier unwrap error for example would screw it up.
-        *is_merging = false;
         // TODO hint file
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use tempfile::{tempdir, TempDir};
+
+    use super::{BitCask, StoreConfig};
+    use crate::random_string;
+
+    fn default_bitcask() -> (BitCask, TempDir) {
+        let dir = tempdir().unwrap();
+        let cfg = StoreConfig {
+            log_dir: dir.path().to_path_buf(),
+            max_log_file_size: 1000,
+        };
+        // Return to ensure tempdir does not go out of scope.
+        (BitCask::new(Arc::new(cfg)).unwrap(), dir)
+    }
+
+    /// Basic happy path test.
+    #[test]
+    fn test_happy_path() {
+        let (bitcask, _tempdir) = default_bitcask();
+
+        let key1 = "foo";
+        let val1 = "bar";
+        bitcask.set(key1, val1).unwrap();
+
+        let key2 = "baz";
+        let val2 = "quux\n\nand\n\nother\n\nstuff\n\ntoo";
+        bitcask.set(key2, val2).unwrap();
+
+        assert_eq!(bitcask.get(key1).unwrap(), val1);
+        assert_eq!(bitcask.get(key2).unwrap(), val2);
+    }
+
+    /// Test merge functionality.
+    #[test]
+    fn test_merge() {
+        let (bitcask, tempdir) = default_bitcask();
+        let config = bitcask.config.clone();
+        let key1 = "foo";
+        let mut val = String::new();
+        for _ in 0..50 {
+            val = random_string(25);
+            bitcask.set(key1, &val).unwrap();
+        }
+        assert!(std::fs::read_dir(tempdir.path()).unwrap().count() > 2);
+
+        bitcask.merge().unwrap();
+        assert_eq!(bitcask.get(key1).unwrap(), val);
+        assert!(std::fs::read_dir(config.log_dir.clone()).unwrap().count() <= 2);
+    }
+
+    /// Wrapper around a test fn that sets up a bitcask instance good for testing.
+    fn run_test(cfg: Option<Arc<StoreConfig>>, test: impl FnOnce(&mut BitCask)) {
+        let dir = tempdir().unwrap();
+        // TODO this whole thing is a bit clunky, oughta be a smoother way
+        let default_cfg = StoreConfig {
+            log_dir: dir.path().to_path_buf(),
+            max_log_file_size: 1000,
+        };
+        let cfg = cfg.unwrap_or_else(|| Arc::new(default_cfg));
+        let mut bitcask = BitCask::new(cfg).unwrap();
+        test(&mut bitcask);
+    }
+
+    /// Tests whether preexisting log files read correctly on `bitcask` initialization.
+    #[test]
+    fn test_read_existing_on_init() {
+        let dir = tempdir().unwrap();
+        let cfg = StoreConfig {
+            log_dir: dir.path().to_path_buf(),
+            max_log_file_size: 1000,
+        };
+        let cfg = Arc::new(cfg);
+        let key = "foo";
+        let val = "bar";
+        run_test(Some(cfg.clone()), |bitcask| {
+            bitcask.set(key, val).unwrap();
+        });
+
+        // Open new `bitcask` in same directory.
+        run_test(Some(cfg), |bitcask| {
+            assert_eq!(bitcask.get(key).unwrap(), val);
+        });
     }
 }
