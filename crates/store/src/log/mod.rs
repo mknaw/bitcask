@@ -4,9 +4,8 @@ use crc::{Crc, CRC_32_ISCSI};
 
 use crate::Result;
 
-pub mod handle;
+pub mod files;
 pub mod read;
-pub mod write;
 
 // TODO investigate if this is the correct algorithm
 const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);

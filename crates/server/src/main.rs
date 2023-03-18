@@ -64,7 +64,6 @@ fn bitcask_loop(bitcask: BitCask) -> BitCaskTx {
     let (tx, mut rx) = mpsc::channel::<(Command, oneshot::Sender<Option<String>>)>(32);
     let bitcask = Arc::new(bitcask);
 
-    let tx = tx.clone();
     tokio::spawn(async move {
         while let Some((cmd, resp_tx)) = rx.recv().await {
             debug!("received command: {:?}", cmd);

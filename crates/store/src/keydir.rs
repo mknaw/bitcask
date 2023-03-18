@@ -1,9 +1,9 @@
 use std::collections::HashMap;
-use std::ffi::OsString;
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Item {
-    pub file_id: OsString,
+    pub path: PathBuf,
     pub val_sz: usize,
     pub val_pos: u64,
     pub ts: u128,

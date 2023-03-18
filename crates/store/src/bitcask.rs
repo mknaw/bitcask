@@ -1,13 +1,9 @@
 use std::fmt;
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use log::info;
 
 use crate::config::StoreConfig;
 use crate::keydir::KeyDir;
-use crate::log::handle::HandleMap;
-use crate::log::write::Writer;
+use crate::log::files::FileManager;
 use crate::log::LogEntry;
 use crate::merge::merge;
 
@@ -38,16 +34,11 @@ impl std::error::Error for MergeUnderway {}
 
 pub type SharedKeyDir = Arc<RwLock<KeyDir>>;
 
-type SharedHandleMap = Arc<Mutex<HandleMap>>;
-
-type SharedWriter = Arc<Mutex<Writer>>;
-
 pub struct BitCask {
     pub config: Arc<StoreConfig>,
     keydir: SharedKeyDir,
-    handles: SharedHandleMap,
-    writer: SharedWriter,
-    merge_mutex: Arc<Mutex<()>>, // TODO maybe use a single-permit `Semaphore`
+    file_manager: Arc<Mutex<FileManager>>,
+    merge_mutex: Arc<Mutex<()>>,
 }
 
 impl BitCask {
@@ -57,30 +48,20 @@ impl BitCask {
             std::fs::create_dir_all(&config.log_dir)?;
         }
 
-        let mut handles = HandleMap::new(&config)?;
-        let keydir = Self::initialize_keydir(&mut handles);
-        let writer = Writer::new(
-            config.clone(),
-            Arc::new(|_| {
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .ok()
-                    .map(|d| format!("{}.cask", d.as_micros()))
-                    .unwrap()
-            }),
-        );
+        let mut file_manager = FileManager::new(config.clone());
+        file_manager.initialize_from_log_dir()?;
+        let keydir = Self::initialize_keydir(&mut file_manager);
 
         Ok(Self {
             config,
             keydir: Arc::new(RwLock::new(keydir)),
-            handles: Arc::new(Mutex::new(handles)),
-            writer: Arc::new(Mutex::new(writer)),
+            file_manager: Arc::new(Mutex::new(file_manager)),
             merge_mutex: Arc::new(Mutex::new(())),
         })
     }
 
-    pub fn initialize_keydir(handles: &mut HandleMap) -> KeyDir {
-        handles
+    pub fn initialize_keydir(file_manager: &mut FileManager) -> KeyDir {
+        file_manager
             .read_all_items()
             .fold(KeyDir::default(), |mut keydir, reader_item| {
                 keydir.set(reader_item.entry.key.clone(), reader_item.to_keydir_item());
@@ -91,20 +72,17 @@ impl BitCask {
     pub fn set(&self, key: &str, val: &str) -> crate::Result<()> {
         let entry = LogEntry::from_set(key, val)?;
         let key = entry.key.clone();
-        // TODO still have to add to `handles` somewhere!
-        let (item, new_handle) = self.writer.lock().unwrap().set(&entry)?;
+        let mut file_manager = self.file_manager.lock().unwrap();
+        let item = file_manager.set(&entry)?;
         self.keydir.write().unwrap().set(key, item);
-        if let Some(new_handle) = new_handle {
-            self.handles.lock().unwrap().insert(new_handle);
-        }
         Ok(())
     }
 
     pub fn get(&self, key: &str) -> crate::Result<String> {
         if let Some(item) = self.keydir.read().unwrap().get(key) {
             // TODO if we are having file problems, should we evict from the keydir?
-            let mut handles = self.handles.lock().unwrap();
-            let handle = handles.get(&item.file_id)?;
+            let mut file_manager = self.file_manager.lock().unwrap();
+            let handle = file_manager.get_mut(&item.path)?;
             let value = handle.read_item(item)?;
             if !crate::is_tombstone(&value) {
                 return Ok(value);
@@ -118,52 +96,32 @@ impl BitCask {
     }
 
     pub fn merge(&self) -> crate::Result<()> {
-        // Take a mutex to hold throughout this scope.
+        // Take mutex to hold throughout this function's scope.
         let _merge_mutex = self.merge_mutex.try_lock().map_err(|_| MergeUnderway)?;
-        let handles = {
-            let mut handles = self.handles.lock().unwrap().try_clone().unwrap();
-            let writer = self.writer.lock().unwrap();
-            if let Some(current_write_file_id) = writer.current_file_id() {
-                handles.remove(current_write_file_id);
-            };
-            handles
+        let files_to_merge: Vec<_> = {
+            let file_manager = self.file_manager.lock().unwrap().try_clone().unwrap();
+            file_manager.iter_closed().map(|f| f.path.clone()).collect()
         };
-        let (new_keydir, new_handles) =
-            merge(self.keydir.clone(), handles, self.config.clone()).unwrap();
-        self.finalize_merge(new_keydir, new_handles);
+        let (merge_keydir, merge_file_manager) =
+            merge(self.keydir.clone(), &files_to_merge, self.config.clone()).unwrap();
 
-        Ok(())
-    }
-
-    pub fn finalize_merge(&self, new_keydir: KeyDir, new_handles: HandleMap) {
         let mut keydir = self.keydir.write().unwrap();
-        for (key, item) in new_keydir.data {
+        for (key, item) in merge_keydir.data {
             keydir.set(key, item);
         }
 
-        // TODO have to remove this unseemly bit.
-        let writer = self.writer.lock().unwrap();
-        let mut handles = self.handles.lock().unwrap();
-        let current_write_file_id = writer.current_file_id();
-        for handle in handles
-            .inner
-            .values()
-            .filter(|h| Some(&h.id) != current_write_file_id)
-        {
-            info!("Removing {:?}", handle.path);
-            std::fs::remove_file(&handle.path).unwrap();
+        let mut file_manager = self.file_manager.lock().unwrap();
+        for path in files_to_merge {
+            if let Some(handle) = file_manager.remove(&path) {
+                std::fs::remove_file(&handle.path).unwrap();
+            }
         }
-        // TODO this really isnt a sufficient condition!
-        // We could have added files since the merge job was queued, so we need to get
-        // from the merge job a list of files that were merged and only delete those.
-        handles
-            .inner
-            .retain(|id, _| Some(id) == current_write_file_id);
-        for (_, handle) in new_handles.inner {
-            handles.insert(handle);
+
+        for (_, handle) in merge_file_manager.inner {
+            file_manager.insert(handle);
         }
-        // earlier unwrap error for example would screw it up.
-        // TODO hint file
+
+        Ok(())
     }
 }
 

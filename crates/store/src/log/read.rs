@@ -1,19 +1,19 @@
-use std::ffi::OsString;
 use std::io::{BufReader, Read};
+use std::path::PathBuf;
 
 use log::{debug, info};
 
-use crate::log::handle::ReadHandle;
+use crate::log::files::FileHandle;
 use crate::log::LogEntry;
 use crate::Result;
 
 pub struct Reader<'a> {
-    reader: BufReader<&'a mut ReadHandle>,
+    reader: BufReader<&'a mut FileHandle>,
     position: usize,
 }
 
 impl<'a> Reader<'a> {
-    pub fn new(handle: &'a mut ReadHandle) -> Self {
+    pub fn new(handle: &'a mut FileHandle) -> Self {
         Self {
             reader: BufReader::new(handle),
             position: 0,
@@ -22,7 +22,7 @@ impl<'a> Reader<'a> {
 }
 
 pub struct ReaderItem {
-    pub file_id: OsString,
+    pub path: PathBuf,
     pub entry: LogEntry,
     pub val_pos: u64,
 }
@@ -30,7 +30,7 @@ pub struct ReaderItem {
 impl ReaderItem {
     pub fn to_keydir_item(&self) -> crate::keydir::Item {
         crate::keydir::Item {
-            file_id: self.file_id.to_os_string(),
+            path: self.path.clone(),
             val_sz: self.entry.val_sz() as usize,
             val_pos: self.val_pos,
             ts: self.entry.ts,
@@ -86,7 +86,7 @@ impl<'a> Iterator for Reader<'a> {
         );
 
         Some(Ok(ReaderItem {
-            file_id: self.reader.get_ref().id.clone(),
+            path: self.reader.get_ref().path.clone(),
             entry,
             val_pos: (self.position - val_sz) as u64,
         }))
