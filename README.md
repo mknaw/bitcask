@@ -1,15 +1,10 @@
-bitcask clone for my educational purposes. see `./examples/bitcask.py` (`cargo run` to run server):
+Rust bitcask implementation for my educational purposes.
+
+Comes with a simple CLI to interact with running server:
 ```
-> ./examples/bitcask.py
-set
-3
-foo
-3
+> bitcask-cli set foo bar
+> bitcask-cli get foo
 bar
-
-get
-3
-foo
-
-Response: bar
 ```
+
+Also allows log compaction via a `merge` command.
