@@ -7,7 +7,7 @@ use crate::bitcask::SharedKeyDir;
 use crate::config::StoreConfig;
 use crate::keydir::{Item, KeyDir};
 use crate::log::files::{FileHandle, FileManager};
-use crate::log::read::{Reader, ReaderItem};
+use crate::log::read::{LogReader, LogReaderItem};
 
 pub struct MergeResult {
     pub keydir: KeyDir,
@@ -25,26 +25,27 @@ pub fn merge(
     let mut new_keydir = KeyDir::default();
     let mut file_manager: FileManager = FileManager::new(config);
     let keydir = keydir.read().unwrap();
+    info!("{:?}", files_to_merge);
     for path in files_to_merge {
         let mut handle = FileHandle::new(path.clone(), false)?;
         handle.rewind()?;
-        let reader = Reader::new(&mut handle);
+        let reader = LogReader::new(&mut handle);
         // TODO should at least log something about encountering parse errors along the way.
-        for ReaderItem { entry, .. } in reader.flatten() {
-            info!("Merging {:?}", entry);
+        for LogReaderItem { entry, .. } in reader.flatten() {
             if let Some(item) = keydir.get(&entry.key) {
                 if item.ts == entry.ts {
+                    info!("Merging {:?}", entry);
                     let (path, position) =
                         file_manager.write(entry.serialize_with_crc().as_bytes())?;
-                    new_keydir.set(
-                        entry.key.clone(),
-                        Item {
-                            path,
-                            val_sz: entry.val_sz() as usize,
-                            val_pos: position - entry.val_sz() as u64,
-                            ts: entry.ts,
-                        },
-                    );
+                    let item = Item {
+                        path,
+                        val_sz: entry.val_sz() as usize,
+                        val_pos: position - entry.val_sz() as u64,
+                        ts: entry.ts,
+                    };
+                    file_manager.write_hint(item.serialize_as_hint(&entry.key).as_bytes())?;
+                    // TODO these writes should definitely be from a `BufWriter`...
+                    new_keydir.set(entry.key.clone(), item);
                 }
             }
         }

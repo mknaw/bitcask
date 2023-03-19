@@ -56,15 +56,4 @@ impl LogEntry {
         let crc = CRC.checksum(s.as_bytes());
         format!("{:08x}{}", crc, s)
     }
-
-    pub fn serialize_hint(&self, position: u64) -> String {
-        format!(
-            "{},{},{},{},{}",
-            self.ts,
-            self.key_sz(),
-            self.val_sz(),
-            position,
-            self.key,
-        )
-    }
 }

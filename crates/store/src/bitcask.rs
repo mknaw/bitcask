@@ -1,9 +1,12 @@
 use std::fmt;
 use std::sync::{Arc, Mutex, RwLock};
 
+use log::info;
+
 use crate::config::StoreConfig;
 use crate::keydir::KeyDir;
 use crate::log::files::FileManager;
+use crate::log::read::{HintReader, LogReader};
 use crate::log::LogEntry;
 use crate::merge::merge;
 
@@ -43,8 +46,10 @@ pub struct BitCask {
 
 impl BitCask {
     pub fn new(config: Arc<StoreConfig>) -> crate::Result<Self> {
+        info!("Initializing BitCask in {:?}", config.log_dir);
         // Create the log directory if it doesn't exist.
         if !config.log_dir.exists() {
+            info!("Directory not found! Creating...");
             std::fs::create_dir_all(&config.log_dir)?;
         }
 
@@ -60,11 +65,28 @@ impl BitCask {
         })
     }
 
+    /// Construct `KeyDir` reflecting existing data in log- and hintfiles in directory.
     pub fn initialize_keydir(file_manager: &mut FileManager) -> KeyDir {
         file_manager
-            .read_all_items()
-            .fold(KeyDir::default(), |mut keydir, reader_item| {
-                keydir.set(reader_item.entry.key.clone(), reader_item.to_keydir_item());
+            .iter_mut()
+            .flat_map(|handle| {
+                match handle.get_hint_file(false).as_mut() {
+                    Some(hint_file) => {
+                        let hint_reader = HintReader::new(hint_file);
+                        hint_reader.flatten().collect::<Vec<_>>()
+                    }
+                    None => {
+                        let reader = LogReader::new(handle);
+                        // TODO probably should log errors instead of just flattening!
+                        reader
+                            .flatten()
+                            .map(|ri| ri.into_key_item_tuple())
+                            .collect::<Vec<_>>()
+                    }
+                }
+            })
+            .fold(KeyDir::default(), |mut keydir, (key, item)| {
+                keydir.set(key, item);
                 keydir
             })
     }
@@ -99,7 +121,7 @@ impl BitCask {
         // Take mutex to hold throughout this function's scope.
         let _merge_mutex = self.merge_mutex.try_lock().map_err(|_| MergeUnderway)?;
         let files_to_merge: Vec<_> = {
-            let file_manager = self.file_manager.lock().unwrap().try_clone().unwrap();
+            let file_manager = self.file_manager.lock().unwrap();
             file_manager.iter_closed().map(|f| f.path.clone()).collect()
         };
         let (merge_keydir, merge_file_manager) =
@@ -114,6 +136,11 @@ impl BitCask {
         for path in files_to_merge {
             if let Some(handle) = file_manager.remove(&path) {
                 std::fs::remove_file(&handle.path).unwrap();
+                let mut hint_path = handle.path.clone();
+                hint_path.set_extension("hint");
+                if hint_path.exists() {
+                    std::fs::remove_file(&hint_path).unwrap();
+                }
             }
         }
 
@@ -127,6 +154,7 @@ impl BitCask {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
     use std::sync::Arc;
 
     use tempfile::{tempdir, TempDir};
@@ -161,24 +189,6 @@ mod tests {
         assert_eq!(bitcask.get(key2).unwrap(), val2);
     }
 
-    /// Test merge functionality.
-    #[test]
-    fn test_merge() {
-        let (bitcask, tempdir) = default_bitcask();
-        let config = bitcask.config.clone();
-        let key1 = "foo";
-        let mut val = String::new();
-        for _ in 0..50 {
-            val = random_string(25);
-            bitcask.set(key1, &val).unwrap();
-        }
-        assert!(std::fs::read_dir(tempdir.path()).unwrap().count() > 2);
-
-        bitcask.merge().unwrap();
-        assert_eq!(bitcask.get(key1).unwrap(), val);
-        assert!(std::fs::read_dir(config.log_dir.clone()).unwrap().count() <= 2);
-    }
-
     /// Wrapper around a test fn that sets up a bitcask instance good for testing.
     fn run_test(cfg: Option<Arc<StoreConfig>>, test: impl FnOnce(&mut BitCask)) {
         let dir = tempdir().unwrap();
@@ -210,6 +220,44 @@ mod tests {
         // Open new `bitcask` in same directory.
         run_test(Some(cfg), |bitcask| {
             assert_eq!(bitcask.get(key).unwrap(), val);
+        });
+    }
+
+    /// Test merge functionality.
+    #[test]
+    fn test_merge() {
+        let dir = tempdir().unwrap();
+        let log_dir = dir.path().to_path_buf();
+        let cfg = Arc::new(StoreConfig {
+            log_dir: log_dir.clone(),
+            max_log_file_size: 1000,
+        });
+
+        let vals: Vec<_> = (0..50).map(|_| random_string(25)).collect();
+
+        run_test(Some(cfg.clone()), |bitcask| {
+            for val in vals.clone() {
+                bitcask.set("foo", &val).unwrap();
+            }
+            assert!(std::fs::read_dir(&log_dir).unwrap().count() > 2);
+        });
+        // Open new `bitcask`, since current write file won't be `merge`d.
+        run_test(Some(cfg.clone()), |bitcask| {
+            bitcask.merge().unwrap();
+
+            assert_eq!(&bitcask.get("foo").unwrap(), vals.last().unwrap());
+            let (cask_files, hint_files): (Vec<_>, Vec<_>) = std::fs::read_dir(&log_dir)
+                .unwrap()
+                .flatten()
+                .partition(|f| f.path().extension() == Some(OsStr::new("cask")));
+            assert!(cask_files.len() <= 2);
+            assert!(hint_files.len() >= cask_files.len() - 1);
+        });
+
+        // Check hint files read on startup.
+        // TODO doesn't actually _explicitly_ check that it read the hint files...
+        run_test(Some(cfg.clone()), |bitcask| {
+            assert_eq!(&bitcask.get("foo").unwrap(), vals.last().unwrap());
         });
     }
 }

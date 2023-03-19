@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -12,7 +12,6 @@ use log::debug;
 
 use crate::config::StoreConfig;
 use crate::keydir::Item;
-use crate::log::read::{Reader, ReaderItem};
 use crate::log::LogEntry;
 use crate::Result;
 
@@ -66,6 +65,17 @@ impl FileHandle {
         // TODO this is pretty clunky, make it prettier
         Self::new(handle.path, false)
     }
+
+    pub fn get_hint_file(&self, writable: bool) -> Option<Self> {
+        // TODO if self extension is hint, return None?
+        let mut hint_path = self.path.clone();
+        hint_path.set_extension("hint");
+        if !(hint_path.exists() || writable) {
+            return None;
+        }
+
+        Self::new(hint_path, writable).ok()
+    }
 }
 
 impl Write for FileHandle {
@@ -111,7 +121,10 @@ impl FileManager {
     }
 
     pub fn initialize_from_log_dir(&mut self) -> Result<()> {
-        for entry in std::fs::read_dir(&self.config.log_dir)?.flatten() {
+        for entry in std::fs::read_dir(&self.config.log_dir)?
+            .flatten()
+            .filter(|dir_entry| dir_entry.path().extension() == Some(OsStr::new("cask")))
+        {
             let path = entry.path();
             let handle = FileHandle::new(path, false).unwrap();
             self.insert(handle);
@@ -129,28 +142,6 @@ impl FileManager {
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut FileHandle> {
         self.inner.values_mut()
-    }
-
-    pub fn read_all_items(&mut self) -> impl Iterator<Item = ReaderItem> + '_ {
-        self.iter_mut().flat_map(|handle| {
-            let reader = Reader::new(handle);
-            // TODO probably should log errors instead of just flattening!
-            reader.flatten().collect::<Vec<_>>()
-        })
-    }
-
-    pub fn try_clone(&self) -> crate::Result<Self> {
-        let inner = self
-            .inner
-            .iter()
-            .map(|(id, handle)| (id.clone(), handle.try_clone().unwrap()))
-            .collect();
-        // TODO not sure if should be setting `current: None`
-        Ok(Self {
-            config: self.config.clone(),
-            current: None,
-            inner,
-        })
     }
 
     pub fn get_current_mut(&mut self) -> Result<&mut FileHandle> {
@@ -230,5 +221,23 @@ impl FileManager {
             val_pos,
             ts: entry.ts,
         })
+    }
+
+    fn get_hint_file_for_current(&self) -> Option<File> {
+        self.current.as_ref().map(|path| {
+            let mut hint_path = path.clone();
+            hint_path.set_extension("hint");
+            File::options()
+                .create_new(!hint_path.exists())
+                .append(true)
+                .open(hint_path)
+                .unwrap() // TODO
+        })
+    }
+
+    pub fn write_hint(&self, hint: &[u8]) -> Result<()> {
+        let mut hint_file = self.get_hint_file_for_current().unwrap();
+        hint_file.write_all(hint)?;
+        Ok(())
     }
 }

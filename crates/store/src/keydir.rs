@@ -9,6 +9,16 @@ pub struct Item {
     pub ts: u128,
 }
 
+impl Item {
+    pub fn serialize_as_hint(&self, key: &str) -> String {
+        let key_sz = key.len();
+        format!(
+            "{:032x}{:016x}{:016x}{:016x}{}",
+            self.ts, key_sz, self.val_sz, self.val_pos, key,
+        )
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct KeyDir {
     // TODO really shouldnt be `pub`
