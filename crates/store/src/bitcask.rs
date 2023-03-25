@@ -104,8 +104,7 @@ impl BitCask {
         if let Some(item) = self.keydir.read().unwrap().get(key) {
             // TODO if we are having file problems, should we evict from the keydir?
             let mut file_manager = self.file_manager.lock().unwrap();
-            let handle = file_manager.get_mut(&item.path)?;
-            let value = handle.read_item(item)?;
+            let value = file_manager.read_item(&item)?;
             if !crate::is_tombstone(&value) {
                 return Ok(value);
             }

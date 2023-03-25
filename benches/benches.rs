@@ -11,7 +11,7 @@ fn default_bitcask() -> (BitCask, TempDir) {
     let dir = tempdir().unwrap();
     let cfg = StoreConfig {
         log_dir: dir.path().to_path_buf(),
-        max_log_file_size: 1000,
+        max_log_file_size: 10_000_000,
     };
     // Return to ensure tempdir does not go out of scope.
     (BitCask::new(Arc::new(cfg)).unwrap(), dir)

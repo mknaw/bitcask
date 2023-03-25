@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use log::debug;
+use memmap2::{Mmap, MmapOptions};
 
 use crate::config::StoreConfig;
 use crate::keydir::Item;
@@ -20,6 +21,7 @@ pub struct FileHandle {
     writable: bool,
     pub path: PathBuf,
     inner: File,
+    mmap: Option<Mmap>,
 }
 
 impl FileHandle {
@@ -37,7 +39,26 @@ impl FileHandle {
             writable,
             path,
             inner,
+            mmap: None,
         })
+    }
+
+    /// Memory-maps the associated `File`.
+    pub fn memory_map(&mut self, max_log_file_size: u64) {
+        let len = if self.writable {
+            // TODO this is particularly dicey with writes whose values exceed the
+            // `max_log_file_size`. Need safeguards around that.
+            max_log_file_size
+        } else {
+            self.inner.metadata().unwrap().len()
+        };
+        let mmap = unsafe {
+            MmapOptions::new()
+                .len(len as usize)
+                .map(&self.inner)
+                .expect("failed to map the file")
+        };
+        self.mmap = Some(mmap);
     }
 
     pub fn rewind(&mut self) -> Result<()> {
@@ -47,10 +68,21 @@ impl FileHandle {
 
     pub fn read_item(&mut self, item: &Item) -> Result<String> {
         debug!("Reading {:?} from {:?}", item, self.inner);
-        self.inner.seek(SeekFrom::Start(item.val_pos))?;
-        let mut buf = vec![0u8; item.val_sz];
-        self.inner.read_exact(&mut buf)?;
-        Ok(from_utf8(&buf[..])?.to_string())
+        match self.mmap.as_ref() {
+            Some(mmap) => {
+                let start = item.val_pos as usize;
+                let end = start + item.val_sz;
+                let buf = &mmap[start..end];
+                Ok(from_utf8(buf).unwrap().to_string())
+            }
+            None => {
+                debug!("Reading from file, rather than memmap!");
+                self.inner.seek(SeekFrom::Start(item.val_pos))?;
+                let mut buf = vec![0u8; item.val_sz];
+                self.inner.read_exact(&mut buf)?;
+                Ok(from_utf8(&buf[..])?.to_string())
+            }
+        }
     }
 
     pub fn try_clone(&self) -> Result<Self> {
@@ -58,6 +90,7 @@ impl FileHandle {
             writable: self.writable,
             path: self.path.clone(),
             inner: self.inner.try_clone()?,
+            mmap: None,
         })
     }
 
@@ -126,7 +159,8 @@ impl FileManager {
             .filter(|dir_entry| dir_entry.path().extension() == Some(OsStr::new("cask")))
         {
             let path = entry.path();
-            let handle = FileHandle::new(path, false).unwrap();
+            let mut handle = FileHandle::new(path, false).unwrap();
+            handle.memory_map(self.config.max_log_file_size);
             self.insert(handle);
         }
         Ok(())
@@ -183,7 +217,9 @@ impl FileManager {
         if let Some(current) = self.current.take() {
             let old = self.inner.remove(&current);
             if let Some(old) = old {
-                self.insert(FileHandle::close_for_write(old)?);
+                let mut read_handle = FileHandle::close_for_write(old)?;
+                read_handle.memory_map(self.config.max_log_file_size);
+                self.insert(read_handle);
             }
         }
 
@@ -191,7 +227,8 @@ impl FileManager {
         let file_name = self.new_file_name();
         let path = self.config.log_dir.join(file_name);
         debug!("Opening new write file {:?}", path);
-        let write_handle = FileHandle::new(path.clone(), true)?;
+        let mut write_handle = FileHandle::new(path.clone(), true)?;
+        write_handle.memory_map(self.config.max_log_file_size);
         self.insert(write_handle);
         self.current = Some(path);
         Ok(())
@@ -221,6 +258,11 @@ impl FileManager {
             val_pos,
             ts: entry.ts,
         })
+    }
+
+    pub fn read_item(&mut self, item: &Item) -> Result<String> {
+        let handle = self.get_mut(&item.path)?;
+        handle.read_item(item)
     }
 
     fn get_hint_file_for_current(&self) -> Option<File> {
