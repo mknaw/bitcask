@@ -10,12 +10,16 @@ pub struct Item {
 }
 
 impl Item {
-    pub fn serialize_as_hint(&self, key: &str) -> String {
+    // TODO key should be as bytes! len may be off.
+    pub fn serialize_as_hint(&self, key: &str) -> Vec<u8> {
         let key_sz = key.len();
-        format!(
-            "{:032x}{:016x}{:016x}{:016x}{}",
-            self.ts, key_sz, self.val_sz, self.val_pos, key,
-        )
+        let mut serialized = Vec::with_capacity(16 + 3 * 8 + key_sz);
+        serialized.extend(self.ts.to_ne_bytes());
+        serialized.extend((key_sz as u64).to_ne_bytes());
+        serialized.extend(self.val_sz.to_ne_bytes());
+        serialized.extend(self.val_pos.to_ne_bytes());
+        serialized.extend(key.as_bytes());
+        serialized
     }
 }
 

@@ -47,20 +47,20 @@ impl<'a> Iterator for LogReader<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         // TODO not very pretty ... maybe `nom(_bufreader)?` would be better here
-        let mut buf = [0u8; 8];
+        let mut buf = [0u8; 4];
         self.reader.read_exact(&mut buf).ok()?;
-        let crc = u32::from_str_radix(std::str::from_utf8(&buf).ok()?, 16).ok()?;
-
-        let mut buf = [0u8; 32];
-        self.reader.read_exact(&mut buf).ok()?;
-        let ts = u128::from_str_radix(std::str::from_utf8(&buf).ok()?, 16).ok()?;
+        let crc = u32::from_ne_bytes(buf);
 
         let mut buf = [0u8; 16];
         self.reader.read_exact(&mut buf).ok()?;
-        let key_sz = usize::from_str_radix(std::str::from_utf8(&buf).ok()?, 16).ok()?;
+        let ts = u128::from_ne_bytes(buf);
+
+        let mut buf = [0u8; 8];
+        self.reader.read_exact(&mut buf).ok()?;
+        let key_sz = u64::from_ne_bytes(buf) as usize;
 
         self.reader.read_exact(&mut buf).ok()?;
-        let val_sz = usize::from_str_radix(std::str::from_utf8(&buf).ok()?, 16).ok()?;
+        let val_sz = u64::from_ne_bytes(buf) as usize;
 
         let mut key = vec![0u8; key_sz];
         self.reader.read_exact(&mut key).ok()?;
@@ -77,7 +77,7 @@ impl<'a> Iterator for LogReader<'a> {
             ts,
         };
 
-        self.position += 8 + 32 + 2 * 16 + key_sz + val_sz;
+        self.position += 4 + 16 + 2 * 8 + key_sz + val_sz;
 
         if entry.crc() != crc {
             info!("CRC mismatch for entry: {:?}", entry);
@@ -110,22 +110,21 @@ impl<'a> Iterator for HintReader<'a> {
     type Item = Result<(String, crate::keydir::Item)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // TODO not very pretty ... maybe `nom(_bufreader)?` would be better here
-        let mut buf = [0u8; 32];
-        self.reader.read_exact(&mut buf).ok()?;
-        let ts = u128::from_str_radix(std::str::from_utf8(&buf).ok()?, 16).ok()?;
-
         let mut buf = [0u8; 16];
         self.reader.read_exact(&mut buf).ok()?;
-        let key_sz = usize::from_str_radix(std::str::from_utf8(&buf).ok()?, 16).ok()?;
+        let ts = u128::from_ne_bytes(buf);
 
-        let mut buf = [0u8; 16];
+        let mut buf = [0u8; 8];
         self.reader.read_exact(&mut buf).ok()?;
-        let val_sz = usize::from_str_radix(std::str::from_utf8(&buf).ok()?, 16).ok()?;
+        let key_sz = u64::from_ne_bytes(buf) as usize;
 
-        let mut buf = [0u8; 16];
+        let mut buf = [0u8; 8];
         self.reader.read_exact(&mut buf).ok()?;
-        let val_pos = usize::from_str_radix(std::str::from_utf8(&buf).ok()?, 16).ok()?;
+        let val_sz = u64::from_ne_bytes(buf) as usize;
+
+        let mut buf = [0u8; 8];
+        self.reader.read_exact(&mut buf).ok()?;
+        let val_pos = u64::from_ne_bytes(buf) as usize;
 
         let mut key = vec![0u8; key_sz];
         self.reader.read_exact(&mut key).ok()?;

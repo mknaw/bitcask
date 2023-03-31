@@ -249,8 +249,9 @@ impl FileManager {
     }
 
     pub fn set(&mut self, entry: &LogEntry) -> Result<Item> {
-        let line = entry.serialize_with_crc();
-        let (path, position) = self.write(line.as_bytes())?;
+        let serialized = entry.serialize_with_crc();
+        let line = serialized.as_slice();
+        let (path, position) = self.write(line)?;
         let val_pos = position - entry.val_sz();
         Ok(Item {
             path,
