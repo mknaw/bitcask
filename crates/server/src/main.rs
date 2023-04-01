@@ -14,7 +14,7 @@ use crate::config::get_server_config;
 mod command;
 mod config;
 
-pub type BitCaskTx = mpsc::Sender<(Command, oneshot::Sender<Option<String>>)>;
+pub type BitCaskTx = mpsc::Sender<(Command, oneshot::Sender<Option<Vec<u8>>>)>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -38,8 +38,8 @@ async fn main() -> Result<()> {
                 tokio::spawn(async move {
                     let res = server_rx.await.unwrap();
                     if let Some(res) = res {
-                        debug!("sending response: {}", res);
-                        stream.write_all(res.as_bytes()).await.unwrap();
+                        debug!("sending response: {}", std::str::from_utf8(&res).unwrap());
+                        stream.write_all(&res).await.unwrap();
                         stream.flush().await.unwrap();
                     }
                 });
@@ -61,12 +61,12 @@ async fn parse_command<'cfg>(stream: &mut BufWriter<TcpStream>) -> Result<Comman
 }
 
 fn bitcask_loop(bitcask: BitCask) -> BitCaskTx {
-    let (tx, mut rx) = mpsc::channel::<(Command, oneshot::Sender<Option<String>>)>(32);
+    let (tx, mut rx) = mpsc::channel::<(Command, oneshot::Sender<Option<Vec<u8>>>)>(32);
     let bitcask = Arc::new(bitcask);
 
     tokio::spawn(async move {
         while let Some((cmd, resp_tx)) = rx.recv().await {
-            debug!("received command: {:?}", cmd);
+            debug!("received command: {}", cmd);
             match cmd {
                 Command::Set((key, val)) => {
                     let bitcask = bitcask.clone();
@@ -90,7 +90,7 @@ fn bitcask_loop(bitcask: BitCask) -> BitCaskTx {
                     let bitcask = bitcask.clone();
                     tokio::spawn(async move {
                         bitcask.merge().unwrap();
-                        resp_tx.send(Some("all done!".to_string())).unwrap();
+                        resp_tx.send(Some(b"all done!".to_vec())).unwrap();
                     });
                 }
             };

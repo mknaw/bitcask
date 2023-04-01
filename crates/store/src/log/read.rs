@@ -14,7 +14,7 @@ pub struct LogReaderItem {
 }
 
 impl LogReaderItem {
-    pub fn into_key_item_tuple(self) -> (String, crate::keydir::Item) {
+    pub fn into_key_item_tuple(self) -> (Vec<u8>, crate::keydir::Item) {
         let val_sz = self.entry.val_sz() as usize;
         (
             self.entry.key,
@@ -42,7 +42,7 @@ impl<'a> HintReader<'a> {
 }
 
 impl<'a> Iterator for HintReader<'a> {
-    type Item = Result<(String, crate::keydir::Item)>;
+    type Item = Result<(Vec<u8>, crate::keydir::Item)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut buf = [0u8; 16];
@@ -63,15 +63,17 @@ impl<'a> Iterator for HintReader<'a> {
 
         let mut key = vec![0u8; key_sz];
         self.reader.read_exact(&mut key).ok()?;
-        let key = std::str::from_utf8(&key).ok()?;
 
-        debug!("Reading from hint: {}", key);
+        debug!(
+            "Reading from hint: \"{}\"",
+            std::str::from_utf8(key.as_slice()).ok()?
+        );
 
         let mut path = self.reader.get_ref().path.clone();
         path.set_extension("cask");
 
         Some(Ok((
-            key.to_string(),
+            key,
             crate::keydir::Item {
                 path,
                 val_sz,

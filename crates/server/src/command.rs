@@ -20,10 +20,27 @@ impl ::std::error::Error for ParseError {}
 
 #[derive(Debug)]
 pub enum Command {
-    Set((String, String)),
-    Get(String),
-    Delete(String),
+    Set((Vec<u8>, Vec<u8>)),
+    Get(Vec<u8>),
+    Delete(Vec<u8>),
     Merge,
+}
+
+fn from_utf8(input: &[u8]) -> &str {
+    std::str::from_utf8(input).unwrap_or("UNREPRESENTABLE")
+}
+
+impl fmt::Display for Command {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Command::Set((key, value)) => {
+                write!(f, "Set \"{}\" => \"{}\"", from_utf8(key), from_utf8(value))
+            }
+            Command::Get(key) => write!(f, "Get \"{}\"", from_utf8(key)),
+            Command::Delete(key) => write!(f, "Delete \"{}\"", from_utf8(key)),
+            Command::Merge => write!(f, "Merge"),
+        }
+    }
 }
 
 /// Parse a `Command::Get` from `input`.
@@ -31,7 +48,7 @@ fn parse_get(i: &str) -> IResult<&str, Command> {
     let (i, _) = preceded(tag("get"), line_ending)(i)?;
     let (i, len) = nom_u64(i)?;
     let (i, key) = preceded(line_ending, take(len))(i)?;
-    Ok((i, Command::Get(key.to_string())))
+    Ok((i, Command::Get(key.as_bytes().to_vec())))
 }
 
 /// Parse a `Command::Set` from `i`.
@@ -42,7 +59,10 @@ fn parse_set(i: &str) -> IResult<&str, Command> {
     let (i, len) = preceded(line_ending, nom_u64)(i)?;
     let (i, val) = preceded(line_ending, take(len))(i)?;
     let (i, _) = all_consuming(multispace0)(i)?;
-    Ok((i, Command::Set((key.to_string(), val.to_string()))))
+    Ok((
+        i,
+        Command::Set((key.as_bytes().to_vec(), val.as_bytes().to_vec())),
+    ))
 }
 
 /// Parse a `Command::Delete` from `i`.
@@ -52,7 +72,7 @@ fn parse_delete(i: &str) -> IResult<&str, Command> {
     let (i, len) = nom_u64(i)?;
     let (i, key) = preceded(line_ending, take(len))(i)?;
     let (i, _) = all_consuming(multispace0)(i)?;
-    Ok((i, Command::Delete(key.to_string())))
+    Ok((i, Command::Delete(key.as_bytes().to_vec())))
 }
 
 /// Parse a `Command::Merge` from `i`.
@@ -81,7 +101,7 @@ mod tests {
     #[test]
     fn test_parse_get() {
         match parse("get\r\n3\r\nfoo") {
-            Ok(Command::Get(c)) => assert!(c == "foo"),
+            Ok(Command::Get(c)) => assert!(c == b"foo"),
             _ => panic!(),
         }
     }
@@ -90,8 +110,8 @@ mod tests {
     fn test_parse_set() {
         match parse("set\r\n3\r\nfoo\r\n7\r\nbar baz") {
             Ok(Command::Set((key, val))) => {
-                assert!(key == "foo");
-                assert!(val == "bar baz");
+                assert!(key == b"foo");
+                assert!(val == b"bar baz");
             }
             _ => panic!(),
         }
@@ -100,7 +120,7 @@ mod tests {
     #[test]
     fn test_parse_delete() {
         match parse("delete\r\n3\r\nfoo") {
-            Ok(Command::Delete(c)) => assert!(c == "foo"),
+            Ok(Command::Delete(c)) => assert!(c == b"foo"),
             _ => panic!(),
         }
     }

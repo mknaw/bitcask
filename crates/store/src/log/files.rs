@@ -85,11 +85,7 @@ impl FileHandle {
         self.read_exact(&mut key)?;
         let mut val = vec![0u8; val_sz as usize];
         self.read_exact(&mut val)?;
-        let entry = LogEntry {
-            key: String::from_utf8(key)?,
-            val: String::from_utf8(val)?,
-            ts,
-        };
+        let entry = LogEntry { key, val, ts };
         if entry.crc() != crc {
             // TODO should `Err` here!
             debug!("TODO mismatched CRC!");
@@ -97,7 +93,7 @@ impl FileHandle {
         Ok(entry)
     }
 
-    pub fn read_item(&mut self, item: &Item) -> Result<String> {
+    pub fn read_item(&mut self, item: &Item) -> Result<Vec<u8>> {
         let entry = self.read_entry(item.val_pos as usize)?;
         Ok(entry.val)
     }
@@ -186,7 +182,7 @@ impl Iterator for FileHandle {
         }
         let val_pos = self.offset;
         let entry = self.read_entry(val_pos as usize).unwrap();
-        debug!("Reading from file: {:?}", entry);
+        debug!("Read: {}", entry);
 
         Some(Ok(LogReaderItem {
             path: self.path.clone(),
@@ -323,7 +319,7 @@ impl FileManager {
         })
     }
 
-    pub fn read_item(&mut self, item: &Item) -> Result<String> {
+    pub fn read_item(&mut self, item: &Item) -> Result<Vec<u8>> {
         let handle = self.get_mut(&item.path)?;
         handle.read_item(item)
     }

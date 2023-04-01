@@ -1,3 +1,4 @@
+use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crc::{Crc, CRC_32_ISCSI};
@@ -10,39 +11,54 @@ pub mod read;
 // TODO investigate if this is the correct algorithm
 const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
 
+// TODO probably should put this in some utils-oriented place...
+fn from_utf8(input: &[u8]) -> &str {
+    std::str::from_utf8(input).unwrap_or("UNREPRESENTABLE")
+}
+
 #[derive(Debug)]
 pub struct LogEntry {
-    pub key: String,
-    pub val: String,
+    pub key: Vec<u8>,
+    pub val: Vec<u8>,
     pub ts: u128,
 }
 
+impl fmt::Display for LogEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "LogEntry: \"{}\" => \"{}\"",
+            from_utf8(&self.key),
+            from_utf8(&self.val)
+        )
+    }
+}
+
 impl LogEntry {
-    pub fn from_set(key: &str, val: &str) -> Result<Self> {
+    pub fn from_set(key: &[u8], val: &[u8]) -> Result<Self> {
         let ts: u128 = SystemTime::now().duration_since(UNIX_EPOCH)?.as_micros();
         Ok(Self {
-            key: key.to_string(),
-            val: val.to_string(),
+            key: key.to_vec(),
+            val: val.to_vec(),
             ts,
         })
     }
 
     pub fn key_sz(&self) -> u64 {
-        self.key.as_bytes().len() as u64
+        self.key.len() as u64
     }
 
     pub fn val_sz(&self) -> u64 {
-        self.val.as_bytes().len() as u64
+        self.val.len() as u64
     }
 
     pub fn serialize(&self) -> Vec<u8> {
-        // TODO this is still not so good, don't need to allocate 2x
         let mut serialized = Vec::new();
         serialized.extend(self.ts.to_ne_bytes());
         serialized.extend(self.key_sz().to_ne_bytes());
         serialized.extend(self.val_sz().to_ne_bytes());
-        serialized.extend(self.key.as_bytes());
-        serialized.extend(self.val.as_bytes());
+        serialized.extend(self.key.clone());
+        serialized.extend(self.val.clone());
         serialized
     }
 
