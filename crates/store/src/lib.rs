@@ -14,10 +14,11 @@ pub mod merge;
 pub type Error = Box<dyn std::error::Error>;
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub(crate) const TOMBSTONE: &str = "☗";
+// TODO I guess I could pick a smaller tombstone (1 byte)
+pub(crate) const TOMBSTONE: &[u8; 3] = b"\xE2\x98\x97";
 
-pub(crate) fn is_tombstone(s: &str) -> bool {
-    s == TOMBSTONE
+pub(crate) fn is_tombstone(bytes: &[u8]) -> bool {
+    bytes == TOMBSTONE
 }
 
 // TODO no great reason why it shouldn't be `pub` in `(crate)` only

@@ -1,4 +1,5 @@
 use std::fmt;
+use std::str::from_utf8;
 use std::sync::{Arc, Mutex, RwLock};
 
 use log::info;
@@ -6,7 +7,7 @@ use log::info;
 use crate::config::StoreConfig;
 use crate::keydir::KeyDir;
 use crate::log::files::FileManager;
-use crate::log::read::{HintReader, LogReader};
+use crate::log::read::HintReader;
 use crate::log::LogEntry;
 use crate::merge::merge;
 
@@ -76,9 +77,8 @@ impl BitCask {
                         hint_reader.flatten().collect::<Vec<_>>()
                     }
                     None => {
-                        let reader = LogReader::new(handle);
                         // TODO probably should log errors instead of just flattening!
-                        reader
+                        handle
                             .flatten()
                             .map(|ri| ri.into_key_item_tuple())
                             .collect::<Vec<_>>()
@@ -104,16 +104,16 @@ impl BitCask {
         if let Some(item) = self.keydir.read().unwrap().get(key) {
             // TODO if we are having file problems, should we evict from the keydir?
             let mut file_manager = self.file_manager.lock().unwrap();
-            let value = file_manager.read_item(&item)?;
-            if !crate::is_tombstone(&value) {
-                return Ok(value);
+            let val = file_manager.read_item(item)?;
+            if !crate::is_tombstone(val.as_bytes()) {
+                return Ok(val);
             }
         }
         Err(KeyMiss.into())
     }
 
     pub fn delete(&self, key: &str) -> crate::Result<()> {
-        self.set(key, crate::TOMBSTONE)
+        self.set(key, from_utf8(crate::TOMBSTONE)?)
     }
 
     pub fn merge(&self) -> crate::Result<()> {

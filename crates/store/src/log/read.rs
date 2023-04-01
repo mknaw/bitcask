@@ -1,25 +1,11 @@
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
 
-use log::{debug, info};
+use log::debug;
 
 use crate::log::files::FileHandle;
 use crate::log::LogEntry;
 use crate::Result;
-
-pub struct LogReader<'a> {
-    reader: BufReader<&'a mut FileHandle>,
-    position: usize,
-}
-
-impl<'a> LogReader<'a> {
-    pub fn new(handle: &'a mut FileHandle) -> Self {
-        Self {
-            reader: BufReader::new(handle),
-            position: 0,
-        }
-    }
-}
 
 pub struct LogReaderItem {
     pub path: PathBuf,
@@ -42,58 +28,7 @@ impl LogReaderItem {
     }
 }
 
-impl<'a> Iterator for LogReader<'a> {
-    type Item = Result<LogReaderItem>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // TODO not very pretty ... maybe `nom(_bufreader)?` would be better here
-        let mut buf = [0u8; 4];
-        self.reader.read_exact(&mut buf).ok()?;
-        let crc = u32::from_ne_bytes(buf);
-
-        let mut buf = [0u8; 16];
-        self.reader.read_exact(&mut buf).ok()?;
-        let ts = u128::from_ne_bytes(buf);
-
-        let mut buf = [0u8; 8];
-        self.reader.read_exact(&mut buf).ok()?;
-        let key_sz = u64::from_ne_bytes(buf) as usize;
-
-        self.reader.read_exact(&mut buf).ok()?;
-        let val_sz = u64::from_ne_bytes(buf) as usize;
-
-        let mut key = vec![0u8; key_sz];
-        self.reader.read_exact(&mut key).ok()?;
-        let key = std::str::from_utf8(&key).ok()?;
-
-        let mut val = vec![0u8; val_sz];
-        self.reader.read_exact(&mut val).ok()?;
-        let val = std::str::from_utf8(&val).ok()?;
-
-        // TODO another needless allocation, should do this nicer-ly
-        let entry = LogEntry {
-            key: key.to_string(),
-            val: val.to_string(),
-            ts,
-        };
-
-        self.position += 4 + 16 + 2 * 8 + key_sz + val_sz;
-
-        if entry.crc() != crc {
-            info!("CRC mismatch for entry: {:?}", entry);
-            return None;
-        } else {
-            debug!("Reading from cask: {}: {}", key, val);
-        }
-
-        Some(Ok(LogReaderItem {
-            path: self.reader.get_ref().path.clone(),
-            entry,
-            val_pos: (self.position - val_sz) as u64,
-        }))
-    }
-}
-
+// TODO think we just should have a `LogFile` and a `HintFile`, both with their own iterators.
 pub struct HintReader<'a> {
     reader: BufReader<&'a mut FileHandle>,
 }

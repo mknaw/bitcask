@@ -4,7 +4,6 @@ use std::fmt::Debug;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
-use std::str::from_utf8;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -13,6 +12,7 @@ use memmap2::{Mmap, MmapOptions};
 
 use crate::config::StoreConfig;
 use crate::keydir::Item;
+use crate::log::read::LogReaderItem;
 use crate::log::LogEntry;
 use crate::Result;
 
@@ -22,6 +22,7 @@ pub struct FileHandle {
     pub path: PathBuf,
     inner: File,
     mmap: Option<Mmap>,
+    pub offset: u64,
 }
 
 impl FileHandle {
@@ -40,7 +41,14 @@ impl FileHandle {
             path,
             inner,
             mmap: None,
+            offset: 0,
         })
+    }
+
+    /// Return the length of the associated `File`.
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> u64 {
+        self.inner.metadata().unwrap().len()
     }
 
     /// Memory-maps the associated `File`.
@@ -50,7 +58,7 @@ impl FileHandle {
             // `max_log_file_size`. Need safeguards around that.
             max_log_file_size
         } else {
-            self.inner.metadata().unwrap().len()
+            self.len()
         };
         let mmap = unsafe {
             MmapOptions::new()
@@ -61,28 +69,37 @@ impl FileHandle {
         self.mmap = Some(mmap);
     }
 
-    pub fn rewind(&mut self) -> Result<()> {
-        self.inner.seek(SeekFrom::Start(0))?;
-        Ok(())
+    pub fn is_at_end(&self) -> bool {
+        self.offset >= self.len()
+    }
+
+    pub fn read_entry(&mut self, start: usize) -> Result<LogEntry> {
+        self.seek(SeekFrom::Start(start as u64))?;
+        let mut metadata = [0u8; 4 + 16 + 2 * 8];
+        self.read_exact(&mut metadata)?;
+        let crc = u32::from_ne_bytes(metadata[0..4].try_into().unwrap());
+        let ts = u128::from_ne_bytes(metadata[4..20].try_into().unwrap());
+        let key_sz = u64::from_ne_bytes(metadata[20..28].try_into().unwrap());
+        let val_sz = u64::from_ne_bytes(metadata[28..36].try_into().unwrap());
+        let mut key = vec![0u8; key_sz as usize];
+        self.read_exact(&mut key)?;
+        let mut val = vec![0u8; val_sz as usize];
+        self.read_exact(&mut val)?;
+        let entry = LogEntry {
+            key: String::from_utf8(key)?,
+            val: String::from_utf8(val)?,
+            ts,
+        };
+        if entry.crc() != crc {
+            // TODO should `Err` here!
+            debug!("TODO mismatched CRC!");
+        };
+        Ok(entry)
     }
 
     pub fn read_item(&mut self, item: &Item) -> Result<String> {
-        debug!("Reading {:?} from {:?}", item, self.inner);
-        match self.mmap.as_ref() {
-            Some(mmap) => {
-                let start = item.val_pos as usize;
-                let end = start + item.val_sz;
-                let buf = &mmap[start..end];
-                Ok(from_utf8(buf).unwrap().to_string())
-            }
-            None => {
-                debug!("Reading from file, rather than memmap!");
-                self.inner.seek(SeekFrom::Start(item.val_pos))?;
-                let mut buf = vec![0u8; item.val_sz];
-                self.inner.read_exact(&mut buf)?;
-                Ok(from_utf8(&buf[..])?.to_string())
-            }
-        }
+        let entry = self.read_entry(item.val_pos as usize)?;
+        Ok(entry.val)
     }
 
     pub fn try_clone(&self) -> Result<Self> {
@@ -91,6 +108,7 @@ impl FileHandle {
             path: self.path.clone(),
             inner: self.inner.try_clone()?,
             mmap: None,
+            offset: 0,
         })
     }
 
@@ -111,10 +129,29 @@ impl FileHandle {
     }
 }
 
+impl Read for FileHandle {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let bytes_written = match self.mmap.as_ref() {
+            Some(mmap) => {
+                let start = self.offset as usize;
+                let end = std::cmp::min(start + buf.len(), mmap.len());
+                // TODO not sure we always want to copy to the start of buf... maybe
+                buf[..(end - start)].copy_from_slice(&mmap[start..end]);
+                end - start
+            }
+            None => self.inner.read(buf)?,
+        };
+        self.offset += bytes_written as u64;
+        Ok(bytes_written)
+    }
+}
+
 impl Write for FileHandle {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         // TODO `Err` when not `writable`
-        self.inner.write(buf)
+        let bytes_written = self.inner.write(buf)?;
+        self.offset += bytes_written as u64;
+        Ok(bytes_written)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -122,15 +159,40 @@ impl Write for FileHandle {
     }
 }
 
-impl Read for FileHandle {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.inner.read(buf)
+impl Seek for FileHandle {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.offset = match self.mmap.as_ref() {
+            Some(mmap) => {
+                match pos {
+                    SeekFrom::Start(k) => k,
+                    SeekFrom::Current(k) => self.offset + k as u64,
+                    // TODO mmap len or file len? Or just err out since we shouldn't be using?
+                    SeekFrom::End(k) => mmap.len() as u64 + k as u64,
+                }
+            }
+            None => self.inner.seek(pos)?,
+        };
+        Ok(self.offset)
     }
 }
 
-impl Seek for FileHandle {
-    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        self.inner.seek(pos)
+// TODO really should just be an `Iterator` for `FileHandle`.
+impl Iterator for FileHandle {
+    type Item = Result<LogReaderItem>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.is_at_end() {
+            return None;
+        }
+        let val_pos = self.offset;
+        let entry = self.read_entry(val_pos as usize).unwrap();
+        debug!("Reading from file: {:?}", entry);
+
+        Some(Ok(LogReaderItem {
+            path: self.path.clone(),
+            entry,
+            val_pos,
+        }))
     }
 }
 
@@ -252,7 +314,7 @@ impl FileManager {
         let serialized = entry.serialize_with_crc();
         let line = serialized.as_slice();
         let (path, position) = self.write(line)?;
-        let val_pos = position - entry.val_sz();
+        let val_pos = position - (line.len() as u64);
         Ok(Item {
             path,
             val_sz: entry.val.len(),
